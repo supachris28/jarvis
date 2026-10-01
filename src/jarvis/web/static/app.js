@@ -560,6 +560,15 @@ $("#delivery-list").addEventListener("click", async (event) => {
   if (result.item) card.replaceWith(deliveryCard(result.item));
   else card.querySelector(".p-status").textContent = result.detail || "Couldn't check.";
 });
+$("#delivery-lookback").addEventListener("click", async (event) => {
+  const button = event.target;
+  button.disabled = true; button.textContent = "Looking…";
+  const result = await (await api("/api/deliveries/look-back", { method: "POST", body: JSON.stringify({ days: 30 }) })).json();
+  button.disabled = false; button.textContent = "Look back";
+  if (result.error) { alert(result.error); return; }
+  await loadDeliveries();
+  alert(`Read ${result.about_parcels} delivery email(s) from the last 30 days — ${result.new} new parcel(s) found.`);
+});
 $("#delivery-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = $("#delivery-input");

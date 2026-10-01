@@ -16,7 +16,7 @@ from . import diag
 from .db import Database
 from .google.calendar import Calendar
 from .google.gmail import Gmail
-from .google.oauth import GoogleAuthRequired, GoogleOAuth
+from .google.oauth import GoogleAuthRequired, GoogleError, GoogleOAuth
 from .llm import Ollama
 from .mcp import MCPClient
 from .notify import Notifier
@@ -109,6 +109,7 @@ class Services:
         self.gmail_pipeline.finder = self.events
         self.deliveries = Deliveries(settings, self.db, self.notifier)
         self.gmail_pipeline.deliveries = self.deliveries
+        self.deliveries.gmail = self.gmail
         try:
             self.events.cleanup_noise()  # suggestions from T&Cs/policy/offer emails made by older versions
         except Exception:  # noqa: BLE001 — never block startup on housekeeping
@@ -143,7 +144,7 @@ class Services:
             Job("ticks", 300, self.scheduler.sync_ticks, "Cancel items ticked in Jarvis/Reminders.md"),
             Job("brief", 60, self.brief.run, f"Morning brief at {settings.brief_time}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
-            Job("deliveries", 3600, self.deliveries.run, "Follow tracking links of active deliveries"),
+            Job("deliveries", 3600, self._deliveries_job, "Follow tracking links of active deliveries"),
             Job("vault", 60, self.writer.flush, "Write queued notes to Obsidian"),
             Job("saves", 60, self.notify_saves, "Tell you what was saved to the vault"),
             Job("logs", 3600, self.prune_logs, f"Keep {settings.log_retention_days} days of diagnostic logs"),
@@ -215,6 +216,16 @@ class Services:
         return f"notified {len(items)}"
 
     # scheduler -------------------------------------------------------------
+    async def _deliveries_job(self) -> dict:
+        """Hourly tracking checks; the first time, also look back over the last 30 days of email."""
+        result = {}
+        if not self.db.get("deliveries.looked_back") and self.oauth.configured and self.oauth.connected:
+            try:
+                result["look_back"] = await self.deliveries.look_back()
+            except GoogleError as error:
+                result["look_back"] = f"failed: {error}"
+        return {**result, **await self.deliveries.run()}
+
     def _apply_calendar_choice(self) -> None:
         """Calendars ticked on the Status page replace GOOGLE_CALENDAR_IDS (read and offered for adding)."""
         chosen = self.db.get("calendars.enabled")

@@ -90,6 +90,8 @@ NOT_DELIVERY = re.compile(r"\b(?:free delivery|delivery (?:charges|pass|offer)|%
 EXPECTED = re.compile(r"\b(?:arriving|arrives|expected(?: delivery)?|estimated(?: delivery)?|delivery date|due|"
                       r"will be delivered|delivered by|get it|should arrive|arrive)\b[^.\n]{0,12}?(?:on|by|between|:)?\s*"
                       r"(?P<rest>[^\n]{0,60})", re.I)
+LOOK_BACK_TERMS = ['dispatched', 'despatched', 'shipped', '"out for delivery"', '"on its way"', 'delivered',
+                   '"tracking number"', '"track your"', '"your parcel"', '"your package"', '"missed you"', 'courier']
 JSON_STATUS = re.compile(r'"(?:status|statusDescription|statusText|state|description|eventDescription|summary|'
                          r'trackingStatus|deliveryStatus|currentStatus)"\s*:\s*"([^"]{3,120})"', re.I)
 
@@ -204,6 +206,7 @@ class Deliveries:
         self.db = db
         self.notifier = notifier
         self._pending: list[int] = []
+        self.gmail = None  # Gmail client, attached by Services (for looking back over older email)
 
     # ------------------------------------------------------------------ reading
     def get(self, delivery_id: int) -> dict | None:
@@ -360,6 +363,35 @@ class Deliveries:
                                           " ", text, flags=re.I), 60)}
         delivery_id = self.upsert(fields, "dispatched", "Added by you.", via="chat")
         return self.get(delivery_id)
+
+    async def look_back(self, days: int = 30, limit: int = 300) -> dict:
+        """Find deliveries in email you already have: a Gmail search for delivery-ish messages from the last `days`,
+        read oldest first so each parcel's status builds up in order. Nothing is announced; parcels already
+        delivered more than three days ago are tidied away by the next hourly run."""
+        from ..google.gmail import parse_message
+        if self.gmail is None:
+            return {"error": "Gmail isn't connected."}
+        query = (f"newer_than:{int(days)}d -category:promotions ({' OR '.join(LOOK_BACK_TERMS)})")
+        ids = await self.gmail.list_message_ids(query, limit)
+        before = {r["id"] for r in self.db.all("SELECT id FROM deliveries")}
+        messages = []
+        for message_id in ids:
+            try:
+                messages.append(parse_message(await self.gmail.message(message_id), self.settings.email_body_limit))
+            except Exception as error:  # noqa: BLE001 — one unreadable email doesn't stop the look-back
+                diag.debug("deliveries", f"skipped an email in the look-back: {type(error).__name__}", id=message_id)
+        found = 0
+        for message in sorted(messages, key=lambda m: m.ts):
+            if self.on_message(message) is not None:
+                found += 1
+        self._pending.clear()
+        self.db.execute("UPDATE deliveries SET active = 0 WHERE active = 1 AND status = 'delivered' AND updated < ?",
+                        (time.time() - 3 * 86400,))
+        new = [r for r in self.active() if r["id"] not in before]
+        self.db.set("deliveries.looked_back", time.time())
+        diag.event("deliveries", f"looked back {days} days: {len(ids)} candidate email(s), {found} about parcels, "
+                                 f"{len(new)} new active deliveries", query=query)
+        return {"emails": len(ids), "about_parcels": found, "new": len(new), "active": len(self.active())}
 
     def quiet(self, delivery_id: int) -> None:
         """Don't notify about changes you've just been shown (a delivery added and checked from chat)."""

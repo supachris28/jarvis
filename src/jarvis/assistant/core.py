@@ -108,6 +108,9 @@ def describe_state(name: str, state: dict) -> str:
 
 TRACK = re.compile(r"^\s*(?:please\s+)?(?:track|follow|watch)\s+(?:my\s+|this\s+|the\s+|a\s+)?(?:parcel|package|"
                    r"delivery|order|shipment)?\s*[:\-]?\s*(?P<what>.*(?:https?://\S+|\b[A-Z0-9]*\d[A-Z0-9]{6,}\b).*)$", re.I)
+LOOK_BACK = re.compile(r"\b(?:look|go|search|scan|check|read)\b.{0,30}\b(?:back|through|over|old|older|past|previous|"
+                       r"e-?mails?|inbox|mail)\b.{0,40}\b(?:deliver(?:y|ies)|parcels?|packages?|orders?|tracking)|"
+                       r"\b(?:deliver(?:y|ies)|parcels?|packages?)\b.{0,30}\b(?:look back|in my (?:e-?mails?|inbox))", re.I)
 DELIVERY_QUESTION = re.compile(r"\b(?:where(?:'s| is| are)|when(?:'s| is| are| will)|any|what|status|is|are)\b.{0,40}"
                                r"\b(?:deliver(?:y|ies)|parcels?|packages?|couriers?|orders?\b(?!\s+(?:of|a|an|the|some|me)\b))"
                                r"|\b(?:deliver(?:y|ies)|parcels?|packages?)\b.{0,30}\b(?:today|tomorrow|arriv|coming|due|expected|status)",
@@ -233,7 +236,8 @@ class Assistant:
             async for event in self.handle_brief(prompt):
                 yield event
             return
-        if self.deliveries is not None and (TRACK.match(prompt) or DELIVERY_QUESTION.search(prompt)):
+        if self.deliveries is not None and (TRACK.match(prompt) or DELIVERY_QUESTION.search(prompt)
+                                            or LOOK_BACK.search(prompt)):
             async for event in self.handle_deliveries(prompt):
                 yield event
             return
@@ -721,6 +725,25 @@ class Assistant:
     async def handle_deliveries(self, prompt: str) -> AsyncIterator[dict]:
         """'track <link or number>' adds a delivery; 'where's my parcel?' lists them — both by script."""
         yield {"type": "meta", "route": "deliveries"}
+        if LOOK_BACK.search(prompt):
+            days = int(m.group(1)) * (7 if "week" in m.group(2) else 30 if "month" in m.group(2) else 1) \
+                if (m := re.search(r"\b(\d{1,3})\s*(days?|weeks?|months?)\b", prompt, re.I)) else 30
+            yield {"type": "status", "text": f"Looking through the last {days} days of email…"}
+            try:
+                result = await self.deliveries.look_back(min(days, 365))
+            except GoogleError as error:
+                result = {"error": str(error)}
+            if result.get("error"):
+                text = f"I couldn't look back through your email: {result['error']}"
+            else:
+                lines = self.deliveries.summary_lines()
+                text = (f"I read {result['about_parcels']} delivery email(s) from the last {days} days and found "
+                        f"{result['new']} parcel(s) I wasn't tracking yet." +
+                        ("\n\n" + "\n".join(f"- {line}" for line in lines) if lines else "\n\nNothing still on its way."))
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
+            return
         match = TRACK.match(prompt)
         if match:
             item = self.deliveries.add_from_chat(match.group("what"))

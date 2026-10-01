@@ -141,6 +141,43 @@ class DeliveryTests(IntegrationBase):
         self.assertEqual(d.get(spa["id"])["poll"], 0)
         self.assertIn("needs a full browser", d.get(spa["id"])["poll_note"])
 
+    def test_look_back_over_older_email(self):
+        s = self.services
+        now = time.time()
+        old = [  # given newest first, as Gmail does — read oldest first so the status ends up right
+            self.email("o3", "Royal Mail <no-reply@royalmail.com>", "Your parcel is out for delivery",
+                       "Your parcel AB111111111GB is out for delivery today.", ts=now - 3600),
+            self.email("o2", "Hobbycraft <orders@hobbycraft.co.uk>", "Your order has been dispatched",
+                       "Tracking number: AB111111111GB. Estimated delivery: tomorrow.", ts=now - 86400),
+            self.email("o1", "Argos <noreply@argos.co.uk>", "Your parcel has been delivered",
+                       "Your parcel AB222222222GB was delivered to your porch.", ts=now - 10 * 86400),
+            self.email("o0", "Sam Jones <sam@example.com>", "Dinner", "Delivered the cake to your mum's, all good."),
+        ]
+        gmail = FakeGmail(old)
+        asked = []
+
+        async def list_ids(query, limit=500):
+            asked.append(query)
+            return [m["id"] for m in old]
+        gmail.list_message_ids = list_ids
+        s.deliveries.gmail = gmail
+        result = self.run_async(s.deliveries.look_back(30))
+        self.assertIn("newer_than:30d", asked[0])
+        active = s.deliveries.active()
+        self.assertEqual([(d["tracking_number"], d["status"]) for d in active], [("AB111111111GB", "out_for_delivery")])
+        self.assertEqual(active[0]["retailer"], "Hobbycraft")  # the retailer from the dispatch email is kept
+        self.assertEqual(result["new"], 1)  # the long-delivered Argos parcel is tidied away, not listed
+        self.assertEqual(s.db.one("SELECT COUNT(*) n FROM notifications")["n"], 0)  # nothing announced
+        # in chat
+        events = self.run_async(self._ask("look back through my emails for deliveries"))
+        self.assertIn("found 0 parcel(s) I wasn't tracking yet", "".join(e.get("text", "") for e in events))
+
+    async def _collect(self, generator):
+        return [e async for e in generator]
+
+    def _ask(self, text):
+        return self._collect(self.services.assistant.handle(text))
+
     def test_chat(self):
         s = self.services
 

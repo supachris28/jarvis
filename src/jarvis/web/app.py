@@ -259,6 +259,20 @@ async def deliveries_add(request: Request) -> Response:
     return JSONResponse(services.deliveries.get(item["id"]))
 
 
+async def deliveries_look_back(request: Request) -> Response:
+    services: Services = request.app.state.services
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    days = max(1, min(365, int((body or {}).get("days", 30) or 30)))
+    try:
+        result = await services.deliveries.look_back(days)
+    except GoogleError as error:
+        result = {"error": str(error)}
+    return JSONResponse(result, status_code=400 if result.get("error") else 200)
+
+
 async def delivery_check(request: Request) -> Response:
     services: Services = request.app.state.services
     delivery_id = int(request.path_params["id"])
@@ -558,6 +572,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/deliveries", deliveries_list),
             Route("/api/deliveries", deliveries_add, methods=["POST"]),
             Route("/api/deliveries/{id:int}/check", delivery_check, methods=["POST"]),
+            Route("/api/deliveries/look-back", deliveries_look_back, methods=["POST"]),
             Route("/api/deliveries/{id:int}/archive", delivery_archive, methods=["POST"]),
             Route("/api/scheduled/{id:int}/confirm", scheduled_confirm, methods=["POST"]),
             Route("/api/scheduled/{id:int}/cancel", scheduled_cancel, methods=["POST"]),
