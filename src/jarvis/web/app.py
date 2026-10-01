@@ -207,7 +207,8 @@ async def event_add(request: Request) -> Response:
         overrides = await request.json()
     except ValueError:
         overrides = {}
-    allowed = {k: overrides[k] for k in ("title", "start", "end", "location", "notes", "all_day") if k in overrides}
+    allowed = {k: overrides[k] for k in ("title", "start", "end", "location", "notes", "all_day", "calendar_id")
+               if k in overrides}
     try:
         item = await services.events.accept(int(request.path_params["id"]), allowed)
     except GoogleError as error:
@@ -244,6 +245,13 @@ async def event_sender_unmute(request: Request) -> Response:
 
 async def email_thread(request: Request) -> Response:
     thread_id = request.path_params["thread_id"]
+    if thread_id == "note":  # a vault email note ([[Sources/Email/…]] in a brief or save report) → its thread
+        path = request.query_params.get("path", "").strip()
+        row = request.app.state.services.db.one(
+            "SELECT thread_id FROM threads WHERE path = ? OR path = ? || '.md'", (path, path))
+        if row is None:
+            return JSONResponse({"error": "Jarvis doesn't know which email that note is for."}, status_code=404)
+        thread_id = row["thread_id"]
     if not re.fullmatch(r"[0-9a-fA-F]{6,32}", thread_id):
         return JSONResponse({"error": "not a Gmail thread id"}, status_code=400)
     data = await request.app.state.services.email_thread(thread_id)
@@ -472,6 +480,13 @@ async def calendars_list(request: Request) -> Response:
         return JSONResponse({"error": str(error)}, status_code=400)
 
 
+async def calendar_targets(request: Request) -> Response:
+    try:
+        return JSONResponse({"calendars": await request.app.state.services.events.target_calendars()})
+    except GoogleError as error:
+        return JSONResponse({"error": str(error), "calendars": []}, status_code=400)
+
+
 async def calendars_save(request: Request) -> Response:
     try:
         body = await request.json()
@@ -590,6 +605,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/brief", brief_now, methods=["POST"]),
             Route("/api/status", status),
             Route("/api/calendars", calendars_list),
+            Route("/api/calendars/targets", calendar_targets),
             Route("/api/notifications/settings", notify_prefs, methods=["GET", "POST"]),
             Route("/api/calendars", calendars_save, methods=["POST"]),
             Route("/api/jobs/{name}/run", run_job, methods=["POST"]),

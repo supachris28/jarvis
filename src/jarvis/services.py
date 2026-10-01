@@ -252,6 +252,7 @@ class Services:
         ids = [str(i) for i in ids if str(i).strip()][:50] or ["primary"]
         self.db.set("calendars.enabled", ids)
         self.settings.google_calendar_ids = ids
+        self.events._targets = (0.0, [])  # the add-to choices change with the ticks
         self.trigger("calendar")  # read the newly chosen calendars now
         return ids
 

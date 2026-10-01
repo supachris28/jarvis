@@ -309,6 +309,14 @@ class EventFinder:
         if row["kind"] == "note":
             return await self._add_note(row, (overrides or {}).get("notes") or row["notes"])
         data = dict(row)
+        wanted = (overrides or {}).get("calendar_id")
+        if wanted and wanted != row["calendar_id"]:  # chosen on the card
+            target = next((c for c in await self.target_calendars() if c["id"] == wanted), None)
+            if target is None:
+                raise GoogleError("That calendar isn't one Jarvis can add to — tick it under Status → Calendars.")
+            self.db.execute("UPDATE event_proposals SET calendar_id = ?, calendar_name = ? WHERE id = ?",
+                            (target["id"], "" if target["primary"] else target["name"], proposal_id))
+            row = self.db.one("SELECT * FROM event_proposals WHERE id = ?", (proposal_id,))
         for key in ("title", "start", "end", "location", "notes", "all_day"):
             if overrides and key in overrides and overrides[key] is not None:
                 data[key] = overrides[key]
@@ -489,6 +497,23 @@ class EventFinder:
              int(event["all_day"]), event.get("location", ""), text, event["calendar_id"], event["event_id"]))
         diag.event("events", f"proposed adding to “{event['summary']}”: {text}", event_id=event["event_id"])
         return self.get(cursor.lastrowid)
+
+    async def target_calendars(self, max_age: float = 600) -> list[dict]:
+        """Calendars an event can be added to: the ones ticked under Status → Calendars that you can write to,
+        main calendar first. Cached for ten minutes."""
+        cached_at, cached = getattr(self, "_targets", (0.0, []))
+        if cached and time.time() - cached_at < max_age:
+            return cached
+        chosen = set(self.settings.google_calendar_ids)
+        targets = [{"id": c["id"], "name": c["name"] or c["id"], "primary": c["primary"]}
+                   for c in await self.calendar.calendars()
+                   if c["writable"] and (c["id"] in chosen or (c["primary"] and "primary" in chosen))]
+        if not targets:  # nothing ticked that can be written to: the main calendar
+            targets = [{"id": c["id"], "name": c["name"] or c["id"], "primary": True}
+                       for c in await self.calendar.calendars() if c["primary"]]
+        targets.sort(key=lambda c: (not c["primary"], c["name"].casefold()))
+        self._targets = (time.time(), targets)
+        return targets
 
     async def find_calendar(self, name: str) -> tuple[str, str, str]:
         """'Family' → (calendar id, its name, problem or ''). Falls back to the default calendar."""

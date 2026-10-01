@@ -18,13 +18,19 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
 };
 
+/* [[Sources/Email/…]] notes open in Jarvis's email reader (works on phones); other notes open in Obsidian */
+function wikiHref(target) {
+  if (/^Sources\/Email\//i.test(target)) return `#email?note=${encodeURIComponent(target)}`;
+  return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(target)}`;
+}
+
 /* ---------- tiny, safe markdown ---------- */
 function inline(text) {
   let s = esc(text);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
-    const href = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(target.replace(/&amp;/g, "&"))}`;
+    const href = wikiHref(target.replace(/&amp;/g, "&"));
     return `<a href="${href}">${alias || target.split("/").pop()}</a>`;
   });
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -43,7 +49,7 @@ function richMarkdown(text) {
         return m ? { type: "wikilink", raw: m[0], target: m[1], alias: m[2] } : undefined;
       },
       renderer(token) {
-        const href = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(token.target)}`;
+        const href = wikiHref(token.target);
         return `<a href="${esc(href)}">${esc(token.alias || token.target.split("/").pop())}</a>`;
       },
     }] });
@@ -55,7 +61,7 @@ function richMarkdown(text) {
     });
     richReady = true;
   }
-  return DOMPurify.sanitize(marked.parse(String(text)), { ALLOWED_URI_REGEXP: /^(?:https?|obsidian|mailto):/i });
+  return DOMPurify.sanitize(marked.parse(String(text)), { ALLOWED_URI_REGEXP: /^(?:(?:https?|obsidian|mailto):|\/?#)/i });
 }
 function markdown(text) {
   if (window.marked && window.DOMPurify) {
@@ -117,7 +123,10 @@ function route() {
   if (view === "changes") loadChanges();
   if (view === "plan") loadPlan();
   if (view === "logs") loadLogs();
-  if (view === "email") loadEmail(new URLSearchParams(location.hash.split("?")[1] || "").get("thread"));
+  if (view === "email") {
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    loadEmail(params.get("thread"), params.get("note"));
+  }
   if (view === "chat") {
     $("#prompt").focus();
     if (chatNeedsScroll) requestAnimationFrame(scrollChatToBottom);  // messages added while this tab was hidden
@@ -449,10 +458,11 @@ function proposalCard(p) {
       <label>Location <input name="location" value="${esc(p.location)}"></label>
     </div>
     <div class="p-actions">
-      ${p.status === "pending" ? `<button data-act="add">Add to calendar</button><button class="ghost" data-act="edit">Edit</button><button class="ghost" data-act="dismiss">Dismiss</button>${p.sender && p.source === "llm" ? `<button class="ghost" data-act="mute" title="${esc(p.sender)}">Not from this sender</button>` : ""}`
+      ${p.status === "pending" ? `<label class="cal-pick hidden" title="Which calendar">📅 <select name="calendar_id"></select></label><button data-act="add">Add to calendar</button><button class="ghost" data-act="edit">Edit</button><button class="ghost" data-act="dismiss">Dismiss</button>${p.sender && p.source === "llm" ? `<button class="ghost" data-act="mute" title="${esc(p.sender)}">Not from this sender</button>` : ""}`
         : `<span class="tag">${esc(p.status)}</span>`}
     </div>
     <div class="p-status small"></div>`;
+  if (p.status === "pending") fillCalendarPicker(el.querySelector('[name="calendar_id"]'), p.calendar_id);
   el.querySelector('[name="all_day"]').addEventListener("change", (e) => {
     const allDay = e.target.checked;
     for (const name of ["start", "end"]) {
@@ -463,6 +473,23 @@ function proposalCard(p) {
     }
   });
   return el;
+}
+/* which of your calendars (ticked under Status → Calendars) an event goes into */
+let calendarTargets = null;
+function getCalendarTargets() {
+  if (!calendarTargets) {
+    calendarTargets = api("/api/calendars/targets").then((r) => r.json()).then((d) => d.calendars || [])
+      .catch(() => { calendarTargets = null; return []; });
+  }
+  return calendarTargets;
+}
+async function fillCalendarPicker(select, current) {
+  if (!select) return;
+  const targets = await getCalendarTargets();
+  if (targets.length < 2) return;  // only one place it can go: nothing to choose
+  const chosen = targets.some((c) => c.id === current) ? current : (targets.find((c) => c.primary) || targets[0]).id;
+  select.innerHTML = targets.map((c) => `<option value="${esc(c.id)}" ${c.id === chosen ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+  select.closest(".cal-pick").classList.remove("hidden");
 }
 function noteCard(p) {  // add a detail (e.g. a booking reference) to an event that's already in the calendar
   const el = document.createElement("div");
@@ -505,6 +532,8 @@ document.addEventListener("click", async (event) => {
     body = { title: val("title").value, all_day: allDay, location: val("location").value, start: val("start").value,
              end: allDay ? (val("end").value ? addDays(val("end").value, 1) : "") : val("end").value };
   }
+  const picker = card.querySelector('[name="calendar_id"]');
+  if (picker && picker.value) body.calendar_id = picker.value;
   button.disabled = true;
   status.textContent = "Adding…";
   const response = await api(`/api/events/${id}/add`, { method: "POST", body: JSON.stringify(body) });
@@ -575,11 +604,12 @@ async function loadEvents() {
   await loadMuted();
 }
 /* ---------- reading an email inside Jarvis (Gmail web links can't open one email on Android) ---------- */
-async function loadEmail(threadId) {
+async function loadEmail(threadId, notePath) {
   $("#email-subject").textContent = "Loading…";
   $("#email-messages").innerHTML = "";
-  if (!threadId) return;
-  const response = await api(`/api/email/${encodeURIComponent(threadId)}`);
+  if (!threadId && !notePath) return;
+  const response = await api(threadId ? `/api/email/${encodeURIComponent(threadId)}`
+                                      : `/api/email/note?path=${encodeURIComponent(notePath)}`);
   const data = await response.json();
   if (!response.ok) { $("#email-subject").textContent = data.error || "Couldn't load that email."; return; }
   $("#email-subject").textContent = data.subject || "(no subject)";
@@ -731,6 +761,7 @@ $("#calendar-save").addEventListener("click", async () => {
   const ids = [...document.querySelectorAll("#calendar-list input:checked")].map((i) => i.value);
   const response = await api("/api/calendars", { method: "POST", body: JSON.stringify({ ids }) });
   $("#calendar-status").textContent = response.ok ? `Saved — ${ids.length} calendar(s). Reading them now.` : "Couldn't save.";
+  calendarTargets = null;
 });
 $("#components").addEventListener("click", (event) => {
   if (event.target.closest("a")) return;

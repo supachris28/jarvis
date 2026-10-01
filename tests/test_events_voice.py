@@ -278,6 +278,16 @@ class EventFlowTests(IntegrationBase):
             self.assertEqual(next(e for e in events if e["type"] == "meta")["route"], "events")
             listing = client.get("/api/events?status=added").json()
             self.assertEqual(len(listing["items"]), 1)
+            # [[Sources/Email/…]] links in chat open the email inside Jarvis
+            self.services.db.execute("INSERT INTO threads (thread_id, path, subject, first_ts) VALUES "
+                                     "('18c2f3a9b', 'Sources/Email/2026/09/House move.md', 'House move', 1)")
+            self.services.db.execute(
+                "INSERT INTO emails (message_id, thread_id, ts, from_addr, from_name, to_addrs, subject, labels, bulk, "
+                "outgoing, snippet, body, attachments) VALUES ('m9', '18c2f3a9b', 1, 'sam@example.com', 'Sam', '[]', "
+                "'House move', '[]', 0, 0, '', 'Moving to Leeds', '[]')")
+            email = client.get("/api/email/note?path=Sources/Email/2026/09/House move", headers=h).json()
+            self.assertEqual((email["subject"], email["messages"][0]["body"]), ("House move", "Moving to Leeds"))
+            self.assertEqual(client.get("/api/email/not-hex!", headers=h).status_code, 400)
 
     def test_named_calendar(self):
         s = self.services
@@ -290,6 +300,19 @@ class EventFlowTests(IntegrationBase):
         s.set_calendars(["primary", "fam123@group.calendar.google.com"])
         self.assertEqual(s.settings.google_calendar_ids, ["primary", "fam123@group.calendar.google.com"])
         self.assertEqual(s.db.get("calendars.enabled"), ["primary", "fam123@group.calendar.google.com"])
+        # the card offers the ticked calendars you can write to, main one first
+        targets = self.run_async(s.events.target_calendars())
+        self.assertEqual([c["name"] for c in targets], ["Chris", "Family"])
+        card = next(e for e in self.run_async(self._ask("Add dentist on Friday at 3pm to my calendar"))
+                    if e["type"] == "proposals")["items"][0]
+        from jarvis.google.oauth import GoogleError
+        with self.assertRaises(GoogleError):  # a hidden calendar you haven't ticked can't be chosen
+            self.run_async(s.events.accept(card["id"], {"calendar_id": "work@group.calendar.google.com"}))
+        added = self.run_async(s.events.accept(card["id"], {"calendar_id": "fam123@group.calendar.google.com"}))
+        self.assertEqual((self.fake_cal.calendar_ids[-1], added["calendar_name"]),
+                         ("fam123@group.calendar.google.com", "Family"))
+        self.fake_cal.inserted.clear()
+        self.fake_cal.calendar_ids = []
 
         async def ask(text):
             return [e async for e in s.assistant.handle(text)]

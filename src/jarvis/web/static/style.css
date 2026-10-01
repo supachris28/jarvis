@@ -168,3 +168,5 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4 { font-size: 1em; margin: .6rem 0 .3rem; }
 .email-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .5rem; font-size: .95em; }
 .email-message { margin-bottom: .5rem; }
+.cal-pick { display: inline-flex; align-items: center; gap: .3rem; margin-right: .4rem; }
+.cal-pick select { width: auto; max-width: 11rem; padding: .3rem .4rem; }
