@@ -1,0 +1,52 @@
+# Jarvis + ntfy on the home server, behind SWAG.
+# Copy this folder to the server (e.g. /opt/jarvis), create .env from .env.server.example, then:
+#   docker login registry.keeeys.uk
+#   docker compose pull && docker compose up -d
+
+services:
+  jarvis:
+    image: registry.keeeys.uk/jarvis:${JARVIS_TAG:-latest}
+    container_name: jarvis
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - jarvis-data:/data
+      # The Obsidian vault inside Nextcloud's data folder. Read-only: Jarvis writes through Nextcloud's
+      # WebDAV API so Nextcloud (and your devices) see every change immediately.
+      - ${VAULT_HOST_PATH:-./vault}:/vault:ro
+      - ./certs:/certs:ro            # only for the old Obsidian-on-PC setup
+    group_add: ["${VAULT_GID:-33}"]  # lets Jarvis read Nextcloud's files (www-data = 33)
+    networks: [swag]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  kokoro:
+    # Kokoro-82M text-to-speech (CPU) for spoken replies — OpenAI-compatible API on port 8880
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: kokoro
+    restart: unless-stopped
+    networks: [swag]
+
+  searxng:
+    # Private metasearch engine for Jarvis's internet lookups (internal only — not exposed through SWAG)
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    networks: [swag]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+
+volumes:
+  jarvis-data:
+  ntfy-data:
+
+networks:
+  swag:
+    external: true
+    name: ${SWAG_NETWORK:-swag_default}

@@ -1,0 +1,23 @@
+# SearXNG settings for Jarvis. Only reachable inside the Docker network (not exposed through SWAG).
+# Before first start, replace CHANGE_ME with a random value:
+#   sed -i "s|CHANGE_ME|$(openssl rand -hex 32)|" searxng/settings.yml
+use_default_settings: true
+
+general:
+  instance_name: "Jarvis search"
+
+server:
+  secret_key: "CHANGE_ME"
+  limiter: false          # internal use only, so no rate limiter / Redis needed
+  image_proxy: false
+  method: "GET"
+
+search:
+  safe_search: 1
+  default_lang: "en-GB"
+  formats:
+    - html
+    - json                # Jarvis needs the JSON API
+
+ui:
+  default_locale: "en"

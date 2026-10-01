@@ -1,0 +1,180 @@
+"""Request routing: cheap deterministic checks first, then the local router model."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+
+ROUTES = ("chat", "vault", "gmail", "calendar", "drive", "home", "web", "remember")
+
+PLANNER_PROMPT = """
+You are Jarvis's request router. Return ONLY one JSON object:
+{"route":"chat|vault|gmail|calendar|drive|home|web","query":"short search query"}
+
+vault: the user's personal knowledge in Obsidian — notes, people, family, friends, places,
+       things previously remembered, tags (#tag), journal, or anything about the user's life.
+gmail: email, messages, senders, inbox.
+calendar: meetings, appointments, events, availability, dates, schedule.
+drive: Google Drive files, documents, spreadsheets.
+home: anything in Chris's house from Home Assistant — any device, room or sensor reading: lights, heating,
+      hot water / cylinder, temperatures, humidity, energy and power use, solar, batteries, doors, windows, locks,
+      alarms, appliances, cars on charge, bins. "in my home/house" or "at home" means home.
+web: questions about the outside world that need facts or anything that may have changed — news, prices,
+     sport results, weather elsewhere, opening times, businesses, people in the public eye, products,
+     travel, how-to, definitions, "what is/who is/when did" questions about public things.
+chat: casual conversation, opinions, writing or brainstorming help, maths, or questions about Jarvis itself.
+
+For web, the query is a good search-engine query (no personal details).
+
+The query keeps names, dates, #tags and key terms. For chat use "".
+""".strip()
+
+REMEMBER = re.compile(r"^\s*(?:please\s+)?(?:remember|note(?:\s+down)?|save|jot\s+down)(?:\s+that)?[:,]?\s+(.+)$",
+                      re.IGNORECASE | re.DOTALL)
+WRITE_ACTION = re.compile(
+    r"\b(send|reply|forward|delete|remove|rename|invite|cancel)\b|"
+    r"\b(schedule|move|update|share|create|book)\s+(?:a|an|the|this|that|my|our|it|me)\b",
+    re.IGNORECASE,
+)
+
+
+CALENDAR_ADD = re.compile(
+    r"\b(add|put|pop|stick|schedule|book|create|enter)\b.{0,200}\b(to|in|into|on)\s+(my\s+|the\s+|our\s+)?"
+    r"([\w'’&-]+\s+){0,3}?(google\s+)?(calendar|diary|cal)\b", re.IGNORECASE | re.DOTALL)  # "…to the Family calendar"
+EMAIL_WORDS = re.compile(r"\b(e-?mails?|inbox|mail|gmail)\b", re.IGNORECASE)
+EVENT_WORDS = re.compile(r"\b(events?|dates?|appointments?|bookings?|calendar|invites?|invitations?)\b", re.IGNORECASE)
+SCAN_A = re.compile(r"\b(check|scan|look|search|go through)\b.{0,60}\b(e-?mails?|inbox|mail)\b.{0,60}\bfor\b",
+                    re.IGNORECASE)
+SCAN_B = re.compile(r"\b(events?|dates?|appointments?|bookings?|invitations?)\b.{0,40}\b(in|from)\s+(my\s+)?"
+                    r"(e-?mails?|inbox|mail)\b", re.IGNORECASE)
+SCAN_C = re.compile(r"\b(add|put)\b.{0,60}\bcalendar\b", re.IGNORECASE)
+
+
+def is_calendar_add(prompt: str) -> bool:
+    return bool(CALENDAR_ADD.search(prompt)) and not EMAIL_WORDS.search(prompt)
+
+
+def is_event_scan(prompt: str) -> bool:
+    """'Check my email for events', 'any appointments in my inbox?', 'anything in my email to add to my calendar'."""
+    if SCAN_A.search(prompt) and EVENT_WORDS.search(prompt):
+        return True
+    if SCAN_B.search(prompt) and re.search(r"\b(any|check|find|scan|what|which|add|calendar)\b", prompt, re.I):
+        return True
+    return bool(EMAIL_WORDS.search(prompt) and SCAN_C.search(prompt))
+
+
+@dataclass(frozen=True)
+class Plan:
+    route: str
+    query: str
+
+
+def remember_text(prompt: str) -> str | None:
+    match = REMEMBER.match(prompt)
+    return match.group(1).strip() if match else None
+
+
+def is_write_request(prompt: str) -> bool:
+    return bool(WRITE_ACTION.search(prompt))
+
+
+def parse_plan(raw: str) -> Plan | None:
+    candidate = raw.strip()
+    candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE)
+    try:
+        value = json.loads(candidate)
+    except ValueError:
+        match = re.search(r"\{.*\}", candidate, re.DOTALL)
+        if not match:
+            return None
+        try:
+            value = json.loads(match.group(0))
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    route = str(value.get("route", "")).casefold()
+    query = value.get("query", "")
+    if route == "obsidian":
+        route = "vault"
+    if route not in ROUTES or route == "remember" or not isinstance(query, str):
+        return None
+    if route != "chat" and not query.strip():
+        return None
+    return Plan(route, query.strip())
+
+
+WEB_EXPLICIT = re.compile(
+    r"^\s*(?:please\s+|can you\s+|could you\s+)?(?:search(?:\s+(?:the\s+)?(?:web|internet|online))?(?:\s+for)?|"
+    r"look\s+up|google|find\s+(?:out|online)|check\s+online(?:\s+for)?)\s+(.+?)\s*\??$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def explicit_web(prompt: str) -> str | None:
+    """'search the web for X', 'look up X', 'google X' → X."""
+    if re.search(r"\b(my|our)\s+(e-?mails?|inbox|notes?|vault|calendar|drive|files?)\b", prompt, re.I):
+        return None
+    match = WEB_EXPLICIT.match(prompt)
+    return match.group(1).strip() if match else None
+
+
+KEYWORDS = (
+    ("calendar", ("calendar", "meeting", "meetings", "appointment", "schedule", "availability", "event", "events",
+                  "today", "tomorrow", "this week", "next week")),
+    ("home", ("lights on", "light on", "heating", "temperature in", "thermostat", "door open", "is the door",
+              "garage", "locked", "sensor", "bin day", "bins", "in my home", "in my house", "at home", "in the house",
+              "hot water", "cylinder", "humidity", "energy use", "power use", "solar", "boiler")),
+    ("gmail", ("email", "e-mail", "inbox", "gmail", "mail from", "emailed")),
+    ("drive", ("google drive", "drive", "spreadsheet", "document", "doc ")),
+    ("vault", ("obsidian", "vault", "note", "notes", "#", "remember", "who is", "who's", "birthday", "my wife",
+               "my husband", "my son", "my daughter", "my mum", "my dad", "my mom", "friend", "family", "journal")),
+    ("web", ("latest", "news", "price of", "how much is", "who won", "score", "weather in", "opening times",
+             "what is", "what's the", "when did", "when is", "how do i", "how to", "define ", "meaning of")),
+)
+
+
+def keyword_plan(prompt: str) -> Plan:
+    lowered = prompt.casefold()
+    for route, words in KEYWORDS:
+        if any(word in lowered for word in words):
+            return Plan(route, prompt.strip())
+    return Plan("chat", "")
+
+
+# ---------------------------------------------------------------------------- "I don't know" → search online
+SEARCH_REQUEST = re.compile(r"^\s*SEARCH\s*:\s*(.+)", re.IGNORECASE | re.DOTALL)
+UNSURE = re.compile(
+    r"\bI (?:do not|don't|really don't) (?:know|have (?:any |enough |specific |current |up-to-date |real-time |"
+    r"recent |reliable )*(?:information|details|data|knowledge|access))|"
+    r"\bI(?:'m| am) (?:not (?:sure|certain|aware)|unable to (?:find|browse|access|check|look)|unsure)|"
+    r"\bI (?:can(?:no|')t|could(?:n't| not)) (?:find|browse|access|check|look up|confirm|verify|be sure)|"
+    r"\b(?:my|the) (?:training )?(?:data|knowledge)(?: cut-?off| only goes)|\bknowledge cut-?off\b|"
+    r"\b(?:no|not have) (?:access to )?(?:the internet|real-time|live|current) (?:data|information|access|updates)|"
+    r"\bI (?:have no|haven't got any) (?:information|details|record)|"
+    r"\b(?:recommend|suggest) (?:checking|searching|looking (?:it )?up)|"
+    r"\b(?:check|search|look it up) (?:online|on the (?:web|internet))|"
+    r"\b(?:the )?(?:source data|notes?|data (?:provided|given)) (?:do(?:es)?n't|do(?:es)? not) "
+    r"(?:mention|contain|include|say|answer)",
+    re.IGNORECASE)
+PERSONAL = re.compile(r"\b(my|our|mine|ours)\b", re.IGNORECASE)
+
+
+def search_request(text: str) -> str | None:
+    """The chat model answered 'SEARCH: <query>' → the query."""
+    match = SEARCH_REQUEST.match(text)
+    if not match:
+        return None
+    query = match.group(1).strip().splitlines()[0].strip().strip('"“”')
+    return query[:200] or None
+
+
+def looks_unsure(answer: str) -> bool:
+    """Script check: did the model say it doesn't know / can't check? (only the opening and closing count)"""
+    text = answer.strip()
+    return bool(text) and bool(UNSURE.search(text[:400]) or UNSURE.search(text[-300:]))
+
+
+def is_personal(prompt: str) -> bool:
+    """About Chris's own life ('my car', 'our holiday') — never sent to a search engine."""
+    return bool(PERSONAL.search(prompt))

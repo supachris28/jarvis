@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101418">
+  <title>Jarvis</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <section id="login" class="login hidden">
+    <form id="login-form" class="card">
+      <h1>Jarvis</h1>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <label id="code-row" class="hidden">Authenticator code
+        <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}">
+      </label>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+      <p id="login-hint" class="muted hidden">No password is set yet. On the server run:<br>
+        <code>docker exec -it jarvis python -m jarvis.admin set-password</code></p>
+    </form>
+  </section>
+
+  <div id="app" class="app hidden">
+    <header>
+      <span class="brand">Jarvis</span>
+      <button id="voice-toggle" class="ghost voice" type="button" aria-pressed="false">🔈 Voice off</button>
+      <nav>
+        <a href="#chat" data-view="chat">Chat</a>
+        <a href="#plan" data-view="plan">Plan</a>
+        <a href="#status" data-view="status">Status</a>
+        <a href="#notifications" data-view="notifications">Alerts</a>
+        <a href="#changes" data-view="changes">Vault</a>
+        <a href="#logs" data-view="logs">Logs</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="view-chat" class="view chat">
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <button type="button" id="stop-speech" class="stop-speech hidden" aria-label="Stop speaking">■ Stop speaking</button>
+        <form id="chat-form" class="composer">
+          <textarea id="prompt" rows="1" placeholder="Ask Jarvis…" required></textarea>
+          <button type="submit" id="send">Send</button>
+        </form>
+      </section>
+
+      <section id="view-plan" class="view hidden">
+        <div class="toolbar">
+          <h2>Plan</h2>
+          <button id="show-brief" class="ghost">Today's brief</button>
+        </div>
+        <div id="brief" class="card brief hidden"></div>
+
+        <h3>Needs your OK</h3>
+        <p id="events-warning" class="card warn hidden">Jarvis can't add events yet — go to <a href="#status">Status</a>
+          and press <strong>Connect Google</strong> to grant calendar access.</p>
+        <div id="action-proposals" class="list"></div>
+        <div id="event-list" class="list"></div>
+        <div class="toolbar">
+          <p id="events-queue" class="muted"></p>
+          <button id="scan-events" class="ghost">Check email for events</button>
+        </div>
+
+        <h3>Reminders and scheduled home actions</h3>
+        <div id="scheduled-list" class="list"></div>
+
+        <h3>History</h3>
+        <div id="history" class="list history"></div>
+
+        <details id="muted-box" class="hidden">
+          <summary>Senders Jarvis no longer suggests events from</summary>
+          <div id="muted-senders" class="list"></div>
+        </details>
+      </section>
+
+      <section id="view-status" class="view hidden">
+        <div class="toolbar">
+          <h2>Status</h2>
+          <button id="refresh-status" class="ghost">Refresh</button>
+        </div>
+        <div id="components" class="grid"></div>
+        <div id="google-connect" class="card hidden">
+          <h3>Google</h3>
+          <p class="muted">Gmail, Calendar, Drive and Contacts (read-only), plus adding calendar events you confirm.</p>
+          <a class="button" href="/auth/google/start">Connect Google</a>
+        </div>
+        <details id="calendar-box" class="card">
+          <summary><strong>Calendars</strong> <span class="muted small">— which ones Jarvis reads and can add to</span></summary>
+          <p class="muted small">Calendars hidden in Google Calendar are listed too; tick one (like a shared Family
+            calendar) to include it. Unticked hidden calendars are never read or offered.</p>
+          <div id="calendar-list" class="list"></div>
+          <div class="toolbar"><span id="calendar-status" class="muted small"></span>
+            <button id="calendar-save">Save</button></div>
+        </details>
+        <h3>Background jobs</h3>
+        <div id="jobs" class="list"></div>
+        <div class="toolbar">
+          <button id="test-notify" class="ghost">Send test notification</button>
+          <button id="clear-chat" class="ghost">Clear chat history</button>
+          <button id="logout" class="ghost">Sign out</button>
+        </div>
+      </section>
+
+      <section id="view-notifications" class="view hidden">
+        <h2>Notifications</h2>
+        <details id="notify-settings" class="card">
+          <summary><strong>Settings</strong> <span class="muted small">— what to send, and what may break quiet hours</span></summary>
+          <div id="notify-prefs" class="list"></div>
+          <p id="notify-saved" class="muted small"></p>
+        </details>
+        <div id="notification-list" class="list"></div>
+      </section>
+
+      <section id="view-logs" class="view hidden">
+        <div class="toolbar">
+          <h2>Logs</h2>
+          <div class="toolbar-actions">
+            <button id="verbose-toggle" class="ghost" title="Record full detail (prompts, request bodies) for an hour">Verbose: off</button>
+            <button id="export-logs" class="ghost">Download</button>
+          </div>
+        </div>
+        <p id="log-meta" class="muted small"></p>
+        <div class="segmented" role="tablist">
+          <button data-logmode="traces" class="active" role="tab">Activity</button>
+          <button data-logmode="entries" role="tab">All entries</button>
+        </div>
+        <div class="filters">
+          <select id="trace-kind" aria-label="Kind">
+            <option value="">Everything</option><option value="chat">Chat</option><option value="job">Background jobs</option>
+            <option value="request">Actions</option><option value="client">Browser</option>
+          </select>
+          <label class="check small" id="problems-wrap"><input type="checkbox" id="trace-problems"> Problems only</label>
+          <select id="log-level" aria-label="Level" class="hidden">
+            <option value="debug">Everything</option><option value="info" selected>Info and above</option>
+            <option value="warning">Warnings and errors</option><option value="error">Errors</option>
+          </select>
+          <select id="log-source" aria-label="Source" class="hidden"><option value="">All sources</option></select>
+          <input id="log-search" type="search" placeholder="Search…" class="hidden">
+        </div>
+        <div id="log-list" class="list"></div>
+        <button id="log-more" class="ghost hidden">Older entries</button>
+      </section>
+
+      <section id="view-changes" class="view hidden">
+        <h2>Vault changes</h2>
+        <p id="outbox" class="muted"></p>
+        <div id="change-list" class="list"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
