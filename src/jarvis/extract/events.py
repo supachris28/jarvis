@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -37,7 +37,6 @@ class EventCandidate:
     ical_uid: str = ""
     confidence: float = 1.0
     source: str = "ics"
-    extra: dict = field(default_factory=dict)
 
     def start_dt(self, tz: tzinfo) -> datetime:
         return parse_iso(self.start, tz)

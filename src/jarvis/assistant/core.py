@@ -478,7 +478,7 @@ class Assistant:
             yield event
 
     async def _answer(self, prompt: str, messages: list[dict], fallback: str, can_search: bool = False,
-                      search_query: str = "", everywhere: dict | None = None) -> AsyncIterator[dict]:
+                      everywhere: dict | None = None) -> AsyncIterator[dict]:
         """Stream the model's answer, with fallbacks when it doesn't know.
 
         When a fallback is possible (`everywhere` → look in Chris's other places, `can_search` → the web), the
@@ -532,8 +532,8 @@ class Assistant:
                 async for event in self._look_everywhere(prompt, **everywhere):
                     yield event
                 return
-            if search_query or not is_personal(prompt):
-                query = search_query or prompt[:200]
+            if not is_personal(prompt):
+                query = prompt[:200]
                 diag.event("assistant", "model didn't know — searching online", query=query, answer=answer[:500])
                 yield {"type": "status", "text": "Not sure — checking online…"}
                 async for event in self._web_answer(prompt, query):

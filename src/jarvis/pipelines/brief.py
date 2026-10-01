@@ -22,7 +22,7 @@ from ..ha import HAError, HomeAssistant
 from ..llm import LLMError, Ollama
 from ..notify import Notifier
 from ..vault.markdown import link, one_line
-from .calendar import parse_when as parse_event_time
+from ..extract.events import parse_iso as parse_event_time
 from .scheduled import Scheduler
 
 log = logging.getLogger(__name__)

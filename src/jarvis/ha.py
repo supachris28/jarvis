@@ -224,10 +224,6 @@ class HomeAssistant:
     def name_of(state: dict) -> str:
         return (state.get("attributes") or {}).get("friendly_name") or state.get("entity_id", "")
 
-    async def match(self, target: str, domains: set[str] | None = None) -> list[dict]:
-        """Best-matching entities for a spoken name; ties are all returned (e.g. 'kitchen lights')."""
-        return (await self.match_scored(target, domains))[1]
-
     async def aliases(self) -> dict[str, str]:
         """Taught names → entity ids. One chat turn or job run asks for these several times (routing, gathering,
         resolving), and the source reads a vault note each time — so the answer is cached per trace. A new turn

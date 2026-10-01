@@ -7,19 +7,13 @@ from datetime import datetime, timedelta, timezone
 
 from ..config import Settings
 from ..db import Database
+from ..extract.events import parse_iso
 from ..google.calendar import Calendar
 from ..notify import Notifier
 from ..vault.markdown import link, one_line, safe_name
 from ..vault.writer import VaultWriter
 
 FUTURE_DAYS = 60
-
-
-def parse_when(value: str, tz) -> datetime:
-    if len(value) == 10:  # all-day date
-        return datetime.fromisoformat(value).replace(tzinfo=tz)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
 
 
 class CalendarPipeline:
@@ -52,7 +46,7 @@ class CalendarPipeline:
         if existing is None and event["status"] == "cancelled":
             return False
         tz = self.settings.tz
-        start = parse_when(event["start"], tz) if event["start"] else datetime.now(tz)
+        start = parse_iso(event["start"], tz) if event["start"] else datetime.now(tz)
         local_start = start.astimezone(tz)
         if existing is None:
             path = (f"Sources/Calendar/{local_start:%Y}/{local_start:%Y-%m-%d} "
@@ -81,7 +75,7 @@ class CalendarPipeline:
         self.db.execute("INSERT OR REPLACE INTO journal (day, kind, ref, ts, text) VALUES (?, 'event', ?, ?, ?)",
                         (day, event["event_id"], local_start.timestamp(), text))
         if existing is not None and existing["start"][:10] != event["start"][:10]:
-            old_day = parse_when(existing["start"], tz).astimezone(tz).strftime("%Y-%m-%d")
+            old_day = parse_iso(existing["start"], tz).astimezone(tz).strftime("%Y-%m-%d")
             self.db.queue_note("journal", old_day)
         self.db.queue_note("journal", day)
         self.db.queue_note("event", event["event_id"])
@@ -96,7 +90,7 @@ class CalendarPipeline:
         rows = self.db.all("SELECT * FROM events WHERE reminded = 0 AND all_day = 0 AND status != 'cancelled' "
                            "AND start >= ?", ((now - timedelta(days=1)).date().isoformat(),))
         for row in rows:
-            start = parse_when(row["start"], tz)
+            start = parse_iso(row["start"], tz)
             if not (now <= start <= horizon):
                 continue
             minutes = max(0, int((start - now).total_seconds() // 60))
