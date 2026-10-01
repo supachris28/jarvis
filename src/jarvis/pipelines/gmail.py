@@ -32,6 +32,7 @@ class GmailPipeline:
         self.writer = writer
         self.notifier = notifier
         self.finder = None  # EventFinder, attached by Services
+        self.deliveries = None  # Deliveries, attached by Services
 
     async def run(self) -> dict:
         started = time.time()
@@ -91,6 +92,12 @@ class GmailPipeline:
                     except Exception as error:  # noqa: BLE001 — one odd email must not stop the whole run
                         diag.error("events", f"event check failed for “{message.subject[:60]}”: "
                                    f"{type(error).__name__}: {error}", error, id=message.message_id)
+                if self.deliveries is not None:
+                    try:
+                        self.deliveries.on_message(message)
+                    except Exception as error:  # noqa: BLE001
+                        diag.error("deliveries", f"delivery check failed for “{message.subject[:60]}”: "
+                                   f"{type(error).__name__}: {error}", error, id=message.message_id)
                 if message.bulk:
                     bulk += 1
                     continue
@@ -98,6 +105,11 @@ class GmailPipeline:
                 if not backfill and await self.maybe_notify(message):
                     notified += 1
 
+        if self.deliveries is not None:
+            if backfill:
+                self.deliveries._pending.clear()  # don't announce every old parcel on the first run
+            else:
+                await self.deliveries.flush_notifications()
         self.db.set("gmail.history_id", latest)
         self.db.set("gmail.last_run", started)
         if self.finder is not None:

@@ -49,7 +49,8 @@ class Brief:
         self.llm = llm
         self.notifier = notifier
         self.on_brief = None  # async callback(markdown) set by Services (posts to chat)
-        self.birthday_source = None  # async () -> list[Birthday], set by Services (Assistant.birthdays)
+        self.birthday_source = None
+        self.deliveries = None  # Deliveries, set by Services  # async () -> list[Birthday], set by Services (Assistant.birthdays)
 
     # ---------------------------------------------------------------- sections
     async def weather(self) -> str | None:
@@ -193,6 +194,10 @@ class Brief:
                                (time.time() - 86400,))["n"]
         if new_mail:
             sections.append(("Inbox", [f"{new_mail} new personal email(s) in the last 24 hours."]))
+        if self.deliveries is not None:
+            parcels = self.deliveries.summary_lines(only_today=True)
+            if parcels:
+                sections.append(("Deliveries today", parcels))
         birthdays = await self.birthdays(today)
         if birthdays:
             sections.append(("Birthdays this week", birthdays))

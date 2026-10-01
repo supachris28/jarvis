@@ -41,6 +41,7 @@ CATEGORIES = {
     "email":     {"label": "Important email",                 "on": True,  "quiet": True},
     "home":      {"label": "Home actions",                    "on": True,  "quiet": True},
     "saves":     {"label": "Notes saved to your vault",       "on": False, "quiet": True},
+    "deliveries": {"label": "Delivery updates",               "on": True,  "quiet": True},
     "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True},
 }
 # "quiet": True = held during quiet hours (and counted in the hourly cap); False = always delivered at once.

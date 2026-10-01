@@ -23,6 +23,7 @@ from .notify import Notifier
 from .pipelines.calendar import CalendarPipeline
 from .pipelines.brief import Brief
 from .pipelines.contacts import ContactsPipeline
+from .pipelines.deliveries import Deliveries
 from .pipelines.events import EventFinder
 from .pipelines.scheduled import Scheduler
 from .google.contacts import Contacts
@@ -106,6 +107,8 @@ class Services:
         self.calendar_pipeline = CalendarPipeline(settings, self.db, self.calendar, self.writer, self.notifier)
         self.events = EventFinder(settings, self.db, self.gmail, self.calendar, self.llm, self.notifier)
         self.gmail_pipeline.finder = self.events
+        self.deliveries = Deliveries(settings, self.db, self.notifier)
+        self.gmail_pipeline.deliveries = self.deliveries
         try:
             self.events.cleanup_noise()  # suggestions from T&Cs/policy/offer emails made by older versions
         except Exception:  # noqa: BLE001 — never block startup on housekeeping
@@ -121,6 +124,7 @@ class Services:
         self.assistant = Assistant(settings, self.db, self.llm, self.vault, self.writer, self.gmail,
                                    self.calendar, self.drive, self.events, self.scheduler, self.brief, self.ha,
                                    self.web)
+        self.assistant.deliveries = self.brief.deliveries = self.deliveries
         self.brief.birthday_source = self.assistant.birthdays  # contacts + People notes + vault mentions
         self.ha.alias_source = self.assistant.home_names  # "gas water heater" → water_heater.thermostat1
         self._learn_home_names_from_captures()
@@ -139,6 +143,7 @@ class Services:
             Job("ticks", 300, self.scheduler.sync_ticks, "Cancel items ticked in Jarvis/Reminders.md"),
             Job("brief", 60, self.brief.run, f"Morning brief at {settings.brief_time}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
+            Job("deliveries", 3600, self.deliveries.run, "Follow tracking links of active deliveries"),
             Job("vault", 60, self.writer.flush, "Write queued notes to Obsidian"),
             Job("saves", 60, self.notify_saves, "Tell you what was saved to the vault"),
             Job("logs", 3600, self.prune_logs, f"Keep {settings.log_retention_days} days of diagnostic logs"),

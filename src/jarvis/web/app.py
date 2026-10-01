@@ -240,6 +240,39 @@ async def event_sender_unmute(request: Request) -> Response:
     return JSONResponse({"ok": True})
 
 
+async def deliveries_list(request: Request) -> Response:
+    return JSONResponse({"items": request.app.state.services.deliveries.active()})
+
+
+async def deliveries_add(request: Request) -> Response:
+    services: Services = request.app.state.services
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    item = services.deliveries.add_from_chat(str((body or {}).get("text", ""))[:500])
+    if item.get("error"):
+        return JSONResponse(item, status_code=400)
+    if item["tracking_url"]:
+        await services.deliveries.check(item["id"])
+    services.deliveries.quiet(item["id"])
+    return JSONResponse(services.deliveries.get(item["id"]))
+
+
+async def delivery_check(request: Request) -> Response:
+    services: Services = request.app.state.services
+    delivery_id = int(request.path_params["id"])
+    services.db.execute("UPDATE deliveries SET poll = 1, check_failures = 0, poll_note = '' WHERE id = ?", (delivery_id,))
+    result = await services.deliveries.check(delivery_id)
+    await services.deliveries.flush_notifications()
+    return JSONResponse({**result, "item": services.deliveries.get(delivery_id)})
+
+
+async def delivery_archive(request: Request) -> Response:
+    request.app.state.services.deliveries.archive(int(request.path_params["id"]))
+    return JSONResponse({"ok": True})
+
+
 async def scheduled_list(request: Request) -> Response:
     services: Services = request.app.state.services
     return JSONResponse({"open": services.scheduler.list(), "recent": services.scheduler.recent(),
@@ -522,6 +555,10 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/diag/client", diag_client, methods=["POST"]),
             Route("/api/diag/export", diag_export),
             Route("/api/scheduled", scheduled_list),
+            Route("/api/deliveries", deliveries_list),
+            Route("/api/deliveries", deliveries_add, methods=["POST"]),
+            Route("/api/deliveries/{id:int}/check", delivery_check, methods=["POST"]),
+            Route("/api/deliveries/{id:int}/archive", delivery_archive, methods=["POST"]),
             Route("/api/scheduled/{id:int}/confirm", scheduled_confirm, methods=["POST"]),
             Route("/api/scheduled/{id:int}/cancel", scheduled_cancel, methods=["POST"]),
             Route("/api/brief", brief_now, methods=["POST"]),

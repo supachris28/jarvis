@@ -508,6 +508,7 @@ async function loadPlan() {
   data.open.filter((a) => a.status === "scheduled").forEach((a) => list.appendChild(actionCard(a)));
   if (!list.childElementCount) list.innerHTML = '<p class="muted">Nothing scheduled. Try “remind me to call Mum tomorrow at 6pm” or “turn off the hall light at 11pm”.</p>';
   renderHistory(data.history || []);
+  loadDeliveries();
   await loadEvents();
 }
 async function loadEvents() {
@@ -520,6 +521,55 @@ async function loadEvents() {
   if (!data.items.length && !$("#action-proposals").childElementCount) list.innerHTML = '<p class="muted">Nothing waiting. Events found in your email and home actions you ask for appear here.</p>';
   await loadMuted();
 }
+/* ---------- deliveries ---------- */
+function deliveryCard(d) {
+  const el = document.createElement("div");
+  el.className = `card delivery ${d.status}`;
+  el.dataset.id = d.id;
+  const meta = [d.carrier, d.tracking_number, d.retailer && d.retailer !== d.name ? d.retailer : ""].filter(Boolean).join(" · ");
+  const steps = (d.history || []).slice().reverse().map((h) =>
+    `<li><span class="muted small">${esc(when(h.ts))}</span> ${esc(h.text)} <span class="muted small">(${esc(h.via)})</span></li>`).join("");
+  el.innerHTML = `
+    <div class="p-title">${d.icon} ${esc(d.name)} <span class="tag ${d.status === "delivered" ? "ok" : ["attempted", "delayed"].includes(d.status) ? "warn" : ""}">${esc(d.label)}</span></div>
+    <div class="small">${esc(d.status_text)}</div>
+    <div class="muted small">${d.expected_text && d.status !== "delivered" ? `Expected ${esc(d.expected_text)} · ` : ""}${esc(meta)}${d.checked_text ? ` · checked ${esc(d.checked_text)}` : ""}</div>
+    ${d.poll_note ? `<div class="muted small">${esc(d.poll_note)}</div>` : ""}
+    ${steps ? `<details><summary class="small">History</summary><ul class="small">${steps}</ul></details>` : ""}
+    <div class="p-actions">
+      ${d.tracking_url ? `<a class="button ghost" href="${esc(d.tracking_url)}" target="_blank" rel="noopener">Tracking page</a>` : ""}
+      ${d.tracking_url && d.status !== "delivered" ? '<button class="ghost" data-dact="check">Check now</button>' : ""}
+      <button class="ghost" data-dact="archive">${d.status === "delivered" ? "Done" : "Stop tracking"}</button>
+    </div><div class="p-status small"></div>`;
+  return el;
+}
+async function loadDeliveries() {
+  const data = await (await api("/api/deliveries")).json();
+  const list = $("#delivery-list");
+  list.innerHTML = "";
+  data.items.forEach((d) => list.appendChild(deliveryCard(d)));
+  if (!data.items.length) list.innerHTML = '<p class="muted">No deliveries on the go. Dispatch emails are picked up automatically.</p>';
+}
+$("#delivery-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-dact]");
+  if (!button) return;
+  const card = button.closest(".delivery");
+  button.disabled = true;
+  if (button.dataset.dact === "archive") { await api(`/api/deliveries/${card.dataset.id}/archive`, { method: "POST" }); card.remove(); return; }
+  card.querySelector(".p-status").textContent = "Checking…";
+  const result = await (await api(`/api/deliveries/${card.dataset.id}/check`, { method: "POST" })).json();
+  if (result.item) card.replaceWith(deliveryCard(result.item));
+  else card.querySelector(".p-status").textContent = result.detail || "Couldn't check.";
+});
+$("#delivery-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("#delivery-input");
+  if (!input.value.trim()) return;
+  const response = await api("/api/deliveries", { method: "POST", body: JSON.stringify({ text: input.value }) });
+  if (!response.ok) { alert((await response.json()).error); return; }
+  input.value = "";
+  loadDeliveries();
+});
+
 /* one timeline, newest first: reminders, home actions and calendar decisions together */
 const HISTORY_TONE = { done: "ok", "added to calendar": "ok", failed: "bad" };
 function renderHistory(items) {

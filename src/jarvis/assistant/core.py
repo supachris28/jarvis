@@ -106,6 +106,12 @@ def describe_state(name: str, state: dict) -> str:
             f"{' [' + ', '.join(extra) + ']' if extra else ''} — last changed {str(state.get('last_changed', ''))[:16]}")
 
 
+TRACK = re.compile(r"^\s*(?:please\s+)?(?:track|follow|watch)\s+(?:my\s+|this\s+|the\s+|a\s+)?(?:parcel|package|"
+                   r"delivery|order|shipment)?\s*[:\-]?\s*(?P<what>.*(?:https?://\S+|\b[A-Z0-9]*\d[A-Z0-9]{6,}\b).*)$", re.I)
+DELIVERY_QUESTION = re.compile(r"\b(?:where(?:'s| is| are)|when(?:'s| is| are| will)|any|what|status|is|are)\b.{0,40}"
+                               r"\b(?:deliver(?:y|ies)|parcels?|packages?|couriers?|orders?\b(?!\s+(?:of|a|an|the|some|me)\b))"
+                               r"|\b(?:deliver(?:y|ies)|parcels?|packages?)\b.{0,30}\b(?:today|tomorrow|arriv|coming|due|expected|status)",
+                               re.I)
 CLAIMED_ACTION = re.compile(r"\bI(?:'ve| have)\s+(?:now\s+|just\s+|successfully\s+|gone ahead and\s+)?"
                             r"(?:added|scheduled|booked|created|sent|deleted|removed|moved|turned|switched|cancelled|"
                             r"updated|put|replied|forwarded)\b", re.I)
@@ -122,6 +128,7 @@ class Assistant:
                  scheduler: Scheduler | None = None, brief: Brief | None = None,
                  ha: HomeAssistant | None = None, web: WebSearch | None = None) -> None:
         self.settings = settings
+        self.deliveries = None  # Deliveries, attached by Services
         self.db = db
         self.llm = llm
         self.vault = vault
@@ -224,6 +231,10 @@ class Assistant:
             return
         if self.brief is not None and BRIEF.search(prompt):
             async for event in self.handle_brief(prompt):
+                yield event
+            return
+        if self.deliveries is not None and (TRACK.match(prompt) or DELIVERY_QUESTION.search(prompt)):
+            async for event in self.handle_deliveries(prompt):
                 yield event
             return
         reference = find_reference(prompt)
@@ -703,6 +714,45 @@ class Assistant:
             text = (f"I'll add **{line}** to **{event['summary']}** ({proposal['when']}) — tap **Add note** to "
                     f"confirm.")
             yield {"type": "proposals", "items": [proposal]}
+        yield {"type": "token", "text": text}
+        self.save_turn(prompt, text)
+        yield {"type": "done"}
+
+    async def handle_deliveries(self, prompt: str) -> AsyncIterator[dict]:
+        """'track <link or number>' adds a delivery; 'where's my parcel?' lists them — both by script."""
+        yield {"type": "meta", "route": "deliveries"}
+        match = TRACK.match(prompt)
+        if match:
+            item = self.deliveries.add_from_chat(match.group("what"))
+            if item.get("error"):
+                text = item["error"]
+            else:
+                result = await self.deliveries.check(item["id"]) if item["tracking_url"] else {"ok": False}
+                self.deliveries.quiet(item["id"])
+                item = self.deliveries.get(item["id"])
+                carrier = f" ({item['carrier']})" if item["carrier"] else ""
+                if result.get("ok"):
+                    text = (f"Tracking it{carrier}: **{item['label']}** — {item['status_text']}\n\nI'll check the "
+                            f"tracking page every hour and tell you when it changes.")
+                elif item["tracking_url"]:
+                    text = (f"Added{carrier}. I couldn't read a status from the tracking page yet "
+                            f"({result.get('detail', 'no status')}); I'll keep trying hourly and follow any emails about it.")
+                else:
+                    text = (f"Added tracking number **{item['tracking_number']}**{carrier}. I don't know this carrier's "
+                            f"tracking page, so send me the tracking link if you have it — otherwise I'll follow your emails.")
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
+            return
+        lines = self.deliveries.summary_lines()
+        words = [w for w in re.findall(r"[a-z0-9]{3,}", prompt.casefold())
+                 if w not in {"where", "when", "what", "parcel", "parcels", "package", "packages", "delivery",
+                              "deliveries", "order", "orders", "arriving", "arrive", "coming", "expected", "today",
+                              "tracking", "status", "any", "the", "and", "from", "due", "courier", "have", "there"}]
+        picked = [line for line in lines if any(w in line.casefold() for w in words)] if words else []
+        lines = picked or lines
+        text = ("\n".join(f"- {line}" for line in lines) if lines else
+                "No deliveries on the go. I pick them up from dispatch emails, or say “track <link or number>”.")
         yield {"type": "token", "text": text}
         self.save_turn(prompt, text)
         yield {"type": "done"}

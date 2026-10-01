@@ -175,6 +175,29 @@ CREATE TABLE IF NOT EXISTS scheduled (
     result TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'chat'
 );
+CREATE TABLE IF NOT EXISTS deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created REAL NOT NULL,
+    updated REAL NOT NULL,             -- time of the latest status (email time or check time)
+    retailer TEXT NOT NULL DEFAULT '',
+    item TEXT NOT NULL DEFAULT '',
+    carrier TEXT NOT NULL DEFAULT '',
+    tracking_number TEXT NOT NULL DEFAULT '',
+    tracking_url TEXT NOT NULL DEFAULT '',
+    order_number TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'ordered', -- ordered | dispatched | in_transit | out_for_delivery | attempted | delayed | delivered
+    status_text TEXT NOT NULL DEFAULT '',
+    expected TEXT NOT NULL DEFAULT '',     -- YYYY-MM-DD when known
+    source TEXT NOT NULL DEFAULT 'email',  -- email | chat
+    thread_id TEXT NOT NULL DEFAULT '',
+    poll INTEGER NOT NULL DEFAULT 1,       -- follow the tracking link hourly
+    poll_note TEXT NOT NULL DEFAULT '',
+    check_failures INTEGER NOT NULL DEFAULT 0,
+    last_checked REAL,
+    active INTEGER NOT NULL DEFAULT 1,
+    history TEXT NOT NULL DEFAULT '[]'      -- [{ts, status, text, via}]
+);
+CREATE INDEX IF NOT EXISTS deliveries_active ON deliveries(active, status);
 CREATE TABLE IF NOT EXISTS ha_aliases (
     alias TEXT PRIMARY KEY,            -- lower-case name Chris uses ("gas water heater")
     entity_id TEXT NOT NULL,           -- water_heater.thermostat1
