@@ -158,8 +158,7 @@ class FileVault:
         tags = extract_tags(frontmatter, body)
         links = extract_links(body) + extract_links(json.dumps(frontmatter, default=str))
         title = note_title(relative)
-        with self.db._lock:
-            conn = self.db._conn
+        with self.db.transaction() as conn:  # one commit (one fsync) per note, not one per statement
             conn.execute("INSERT OR REPLACE INTO vault_notes (path, mtime_ns, size, title, frontmatter, tags) "
                          "VALUES (?, ?, ?, ?, ?, ?)",
                          (relative, stat.st_mtime_ns, stat.st_size, title, json.dumps(frontmatter, default=str),
@@ -174,11 +173,11 @@ class FileVault:
                 conn.execute("INSERT INTO vault_fts (path, title, content) VALUES (?, ?, ?)", (relative, title, text))
 
     def _forget(self, relative: str) -> None:
-        with self.db._lock:
+        with self.db.transaction() as conn:
             for table, column in (("vault_notes", "path"), ("vault_links", "src"), ("vault_tags", "path")):
-                self.db._conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (relative,))
+                conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (relative,))
             if self.fts:
-                self.db._conn.execute("DELETE FROM vault_fts WHERE path = ?", (relative,))
+                conn.execute("DELETE FROM vault_fts WHERE path = ?", (relative,))
 
     def _refresh_sync(self) -> dict:
         self._check_root()

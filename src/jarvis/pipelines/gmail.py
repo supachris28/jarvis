@@ -56,7 +56,11 @@ class GmailPipeline:
                 ids = await self.gmail.list_message_ids(f"after:{since}", BACKFILL_LIMIT)
                 latest = str((await self.gmail.profile()).get("historyId"))
 
-        new_ids = [i for i in ids if not self.db.one("SELECT 1 FROM emails WHERE message_id = ?", (i,))]
+        known: set[str] = set()
+        for chunk in (ids[i:i + 500] for i in range(0, len(ids), 500)):  # SQLite caps bound parameters
+            known.update(r["message_id"] for r in self.db.all(
+                f"SELECT message_id FROM emails WHERE message_id IN ({','.join('?' * len(chunk))})", chunk))
+        new_ids = [i for i in ids if i not in known]
         semaphore = asyncio.Semaphore(5)
 
         async def fetch(message_id: str) -> dict | None:

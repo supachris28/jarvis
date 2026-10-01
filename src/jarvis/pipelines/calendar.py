@@ -92,7 +92,9 @@ class CalendarPipeline:
         now = datetime.now(tz)
         horizon = now + timedelta(minutes=self.settings.notify_event_lead_minutes)
         sent = 0
-        rows = self.db.all("SELECT * FROM events WHERE reminded = 0 AND all_day = 0 AND status != 'cancelled'")
+        # `start` is ISO text, so a lexical lower bound (a day of slack for offsets) uses the events(start) index
+        rows = self.db.all("SELECT * FROM events WHERE reminded = 0 AND all_day = 0 AND status != 'cancelled' "
+                           "AND start >= ?", ((now - timedelta(days=1)).date().isoformat(),))
         for row in rows:
             start = parse_when(row["start"], tz)
             if not (now <= start <= horizon):

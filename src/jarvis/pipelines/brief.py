@@ -81,8 +81,8 @@ class Brief:
 
     def events_on(self, day: date) -> list[str]:
         tz = self.settings.tz
-        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND substr(start, 1, 10) <= ? "
-                           "AND substr(end, 1, 10) >= ? ORDER BY start", (day.isoformat(), day.isoformat()))
+        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? "
+                           "ORDER BY start", ((day + timedelta(days=1)).isoformat(), day.isoformat()))
         lines = []
         for row in rows:
             if row["all_day"]:

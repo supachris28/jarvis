@@ -52,6 +52,11 @@ def sender_address(sender: str) -> str:
     return (match.group(1) if match else (sender or "")).strip().lower()
 
 
+def next_day(day: str) -> str:
+    """'2026-10-01' → '2026-10-02', for half-open ISO range queries on text columns."""
+    return (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+
+
 def fingerprint(title: str, start: str) -> str:
     key = " ".join(sorted(title_tokens(title))) + "|" + start[:16]
     return hashlib.sha1(key.encode()).hexdigest()
@@ -192,8 +197,8 @@ class EventFinder:
                                               (candidate.ical_uid,)):
             return True
         day = candidate.start[:10]
-        for row in self.db.all("SELECT summary, start FROM events WHERE substr(start, 1, 10) = ? AND status != 'cancelled'",
-                               (day,)):
+        for row in self.db.all("SELECT summary, start FROM events WHERE start >= ? AND start < ? AND status != 'cancelled'",
+                               (day, next_day(day))):
             if similar_titles(row["summary"], candidate.title):
                 return True
         return False
@@ -215,8 +220,8 @@ class EventFinder:
         if self.db.one("SELECT 1 FROM event_proposals WHERE fingerprint = ?", (print_,)):
             diag.debug("events", f"already proposed: {candidate.title} @ {candidate.start}")
             return None
-        for row in self.db.all("SELECT title FROM event_proposals WHERE substr(start, 1, 10) = ?",
-                               (candidate.start[:10],)):
+        for row in self.db.all("SELECT title FROM event_proposals WHERE start >= ? AND start < ?",
+                               (candidate.start[:10], next_day(candidate.start[:10]))):
             if similar_titles(row["title"], candidate.title):
                 diag.debug("events", f"similar proposal exists that day: {candidate.title} ≈ {row['title']}")
                 return None
@@ -462,7 +467,7 @@ class EventFinder:
         words = title_tokens(rest) - {"the", "and", "event", "this", "next", "with", "for"}
         if not words:
             return None, ""
-        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND substr(start, 1, 10) >= ? "
+        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start >= ? "
                            "ORDER BY start LIMIT 400", (now.date().isoformat(),))
         if day is not None:
             rows = [r for r in rows if r["start"][:10] == day.isoformat()]

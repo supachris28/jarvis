@@ -3,12 +3,13 @@ this database holds cursors, ingested source data, the vault write outbox, sessi
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv (
@@ -198,6 +199,11 @@ CREATE TABLE IF NOT EXISTS logs (
     error TEXT NOT NULL DEFAULT '',
     duration_ms REAL
 );
+CREATE INDEX IF NOT EXISTS events_start ON events(start);
+CREATE INDEX IF NOT EXISTS event_proposals_start ON event_proposals(start);
+CREATE INDEX IF NOT EXISTS event_proposals_status ON event_proposals(status);
+CREATE INDEX IF NOT EXISTS scheduled_status_due ON scheduled(status, due);
+CREATE INDEX IF NOT EXISTS notifications_status_ts ON notifications(status, ts);
 CREATE INDEX IF NOT EXISTS logs_trace ON logs(trace);
 CREATE INDEX IF NOT EXISTS logs_level ON logs(level, id);
 CREATE TABLE IF NOT EXISTS traces (
@@ -251,6 +257,19 @@ class Database:
             for name, definition in columns.items():
                 if name not in existing:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Group several statements into one commit. The connection runs in autocommit mode, so without this
+        every statement is its own WAL commit (and fsync)."""
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                yield self._conn
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            self._conn.execute("COMMIT")
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:
