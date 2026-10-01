@@ -532,6 +532,7 @@ function deliveryCard(d) {
   el.innerHTML = `
     <div class="p-title">${d.icon} ${esc(d.name)} <span class="tag ${d.status === "delivered" ? "ok" : ["attempted", "delayed"].includes(d.status) ? "warn" : ""}">${esc(d.label)}</span></div>
     <div class="small">${esc(d.status_text)}</div>
+    ${d.status === "delivered" && d.delivered_text ? `<div class="small"><strong>Delivered ${esc(d.delivered_text)}</strong></div>` : ""}
     <div class="muted small">${d.expected_text && d.status !== "delivered" ? `Expected ${esc(d.expected_text)} · ` : ""}${esc(meta)}${d.checked_text ? ` · checked ${esc(d.checked_text)}` : ""}</div>
     ${d.poll_note ? `<div class="muted small">${esc(d.poll_note)}</div>` : ""}
     ${steps ? `<details><summary class="small">History</summary><ul class="small">${steps}</ul></details>` : ""}

@@ -220,6 +220,12 @@ class Services:
     async def _deliveries_job(self) -> dict:
         """Hourly tracking checks; the first time, also look back over the last 30 days of email."""
         result = {}
+        if not self.db.get("deliveries.rechecked.v1") and self.oauth.configured and self.oauth.connected:
+            try:  # parcels wrongly marked delivered by an email's progress graphic (before v0.9.3)
+                result["corrected"] = await self.deliveries.recheck_delivered()
+                self.db.set("deliveries.rechecked.v1", time.time())
+            except GoogleError as error:
+                result["corrected"] = f"failed: {error}"
         if not self.db.get("deliveries.looked_back") and self.oauth.configured and self.oauth.connected:
             try:
                 result["look_back"] = await self.deliveries.look_back()

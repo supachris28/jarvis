@@ -109,8 +109,75 @@ def classify(text: str) -> tuple[str, str]:
     return "", ""
 
 
+STAGE_LABELS = {"ordered": "ordered", "order placed": "ordered", "dispatched": "dispatched", "despatched": "dispatched",
+                "shipped": "dispatched", "in transit": "in_transit", "on its way": "in_transit", "on the way": "in_transit",
+                "out for delivery": "out_for_delivery", "delivered": "delivered", "collected": "delivered"}
+STAGE_LINE = re.compile(r"^\s*(?:" + "|".join(re.escape(k) for k in STAGE_LABELS) + r")\s*$", re.I)
+
+
+def without_progress_bar(text: str) -> str:
+    """Drop step-tracker graphics rendered as text — a run of lines that are only stage names
+    ('Ordered / Dispatched / Out for delivery / Delivered'). They list every stage, done or not."""
+    lines = text.split("\n")
+    keep = [True] * len(lines)
+    run: list[int] = []
+    for index, line in enumerate(lines + [""]):
+        if index < len(lines) and STAGE_LINE.match(line):
+            run.append(index)
+            continue
+        if index < len(lines) and not line.strip() and run:
+            continue  # blank lines inside the run
+        if len(run) >= 3:
+            for i in run:
+                keep[i] = False
+        run = []
+    return "\n".join(line for line, k in zip(lines, keep) if k)
+
+
+def step_tracker(markup: str) -> str:
+    """The current stage of an HTML step tracker (Amazon and others): the last stage marked done
+    (an image labelled 'Completed', 'Complete', 'Done' or a tick), not just the last stage listed."""
+    if not markup:
+        return ""
+    starts = [m.end() for m in re.finditer(r'(?i)<[^>]*\brole\s*=\s*["\']listitem["\'][^>]*>', markup)]
+    done = ""
+    found = 0
+    for index, start in enumerate(starts):
+        cell = markup[start:starts[index + 1] if index + 1 < len(starts) else start + 6000]
+        text = re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", cell))).strip().casefold()
+        stage = next((STAGE_LABELS[k] for k in sorted(STAGE_LABELS, key=len, reverse=True) if text == k or
+                      text.endswith(" " + k) or text.startswith(k + " ")), "")
+        if not stage:
+            continue
+        found += 1
+        if re.search(r'(?i)(?:alt|aria-label|title)\s*=\s*["\'](?:completed?|done|tick|checked|current)["\']|checkmark|tick\.png',
+                     cell):
+            done = stage
+    return done if found >= 3 else ""
+
+
 FUTURE = re.compile(r"\b(?:will|would|should|could|to be|once|when|if|before|after it(?:'s| is))\b[^.]{0,40}\bdelivered\b",
                     re.I)
+
+
+def delivered_time(text: str, ts: float, tz) -> float:
+    """When it was delivered: a time in the message ('delivered … at 14:02') on the day of the email, else the email's
+    time."""
+    when = datetime.fromtimestamp(ts, tz)
+    match = re.search(r"\bat\s+(\d{1,2})[:.](\d{2})\s*(am|pm)?\b|\bat\s+(\d{1,2})\s*(am|pm)\b", text, re.I)
+    if match:
+        hour = int(match.group(1) or match.group(4))
+        minute = int(match.group(2) or 0)
+        meridiem = (match.group(3) or match.group(5) or "").casefold()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        if meridiem == "am" and hour == 12:
+            hour = 0
+        if hour < 24 and minute < 60:
+            candidate = when.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate <= when + timedelta(minutes=5):
+                return candidate.timestamp()
+    return ts
 
 
 def find_expected(text: str, today: date) -> str:
@@ -300,6 +367,15 @@ class Deliveries:
                     else f"{day:%a %d %b}"
             except ValueError:
                 pass
+        item["delivered_text"] = ""
+        if item["status"] == "delivered":
+            at = item.get("delivered_at") or item["updated"]
+            moment = datetime.fromtimestamp(at, tz)
+            today = datetime.now(tz).date()
+            day = "today" if moment.date() == today else "yesterday" if moment.date() == today - timedelta(days=1) \
+                else f"{moment:%a %d %b}"
+            item["delivered_text"] = f"{day} at {moment:%H:%M}"
+            item["label"] = f"Delivered {day}"
         item["checked_text"] = datetime.fromtimestamp(item["last_checked"], tz).strftime("%a %H:%M") \
             if item["last_checked"] else ""
         return item
@@ -325,8 +401,7 @@ class Deliveries:
             number, found = tracking_number(url)
             carrier = carrier or found
         carrier = carrier or carrier_for(url, text)
-        status, evidence = classify(f"{message.subject}.\n{message.body[:3000]}")
-        status = data.get("status") or status
+        status, evidence = self.email_status(message)  # a progress graphic's ticks beat the words near it
         if not (number or url or data) and status not in {"out_for_delivery", "delivered", "dispatched", "attempted"}:
             return None  # talks about delivery but gives nothing to track (e.g. a marketing mention)
         order = data.get("order_number") or (ORDER_NUMBER.search(text).group(1) if ORDER_NUMBER.search(text) else "")
@@ -345,7 +420,9 @@ class Deliveries:
             "thread_id": message.thread_id,
         }
         return self.upsert(fields, status or "dispatched", evidence or one_line(message.subject, 160),
-                           via="email", ts=message.ts, title=message.subject)
+                           via="email", ts=message.ts, title=message.subject,
+                           detail=" ".join(s for s in re.split(r"(?<=[.!?])\s+|\n+", message.body[:3000])
+                                           if re.search(r"\bdelivered\b", s, re.I)))
 
     # ------------------------------------------------------------------ storage
     def _match(self, fields: dict):
@@ -358,19 +435,22 @@ class Deliveries:
             return self.db.one("SELECT * FROM deliveries WHERE thread_id = ? ORDER BY id DESC", (fields["thread_id"],))
         return None
 
-    def upsert(self, fields: dict, status: str, text: str, via: str, ts: float | None = None, title: str = "") -> int:
+    def upsert(self, fields: dict, status: str, text: str, via: str, ts: float | None = None, title: str = "",
+               detail: str = "") -> int:
         ts = ts or time.time()
         row = self._match(fields)
         if row is None:
             history = [{"ts": ts, "status": status, "text": text, "via": via}]
+            fields = {**fields}
             cursor = self.db.execute(
                 "INSERT INTO deliveries (created, updated, retailer, item, carrier, tracking_number, tracking_url, "
-                "order_number, status, status_text, expected, source, thread_id, poll, history) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "order_number, status, status_text, expected, source, thread_id, poll, history, delivered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (time.time(), ts, fields.get("retailer", ""), fields.get("item", ""),
                  fields.get("carrier", ""), fields.get("tracking_number", ""), fields.get("tracking_url", ""),
                  fields.get("order_number", ""), status, text, fields.get("expected", ""), via if via == "chat" else "email",
-                 fields.get("thread_id", ""), int(bool(fields.get("tracking_url"))), json.dumps(history)))
+                 fields.get("thread_id", ""), int(bool(fields.get("tracking_url"))), json.dumps(history),
+                 delivered_time(detail or text, ts, self.settings.tz) if status == "delivered" else None))
             diag.event("deliveries", f"new delivery: {fields.get('retailer') or fields.get('carrier')} — {LABELS[status]}",
                        email=title, **{k: v for k, v in fields.items() if v})
             self._pending.append(cursor.lastrowid)
@@ -385,18 +465,21 @@ class Deliveries:
             self.db.execute(f"UPDATE deliveries SET {', '.join(k + ' = ?' for k in updates)} WHERE id = ?",
                             (*updates.values(), row["id"]))
         if ts >= row["updated"] - 1:  # older emails processed late never overwrite a newer status
-            self._set_status(row, status, text, via, ts)
+            self._set_status(row, status, text, via, ts, detail)
         return row["id"]
 
-    def _set_status(self, row, status: str, text: str, via: str, ts: float) -> bool:
+    def _set_status(self, row, status: str, text: str, via: str, ts: float, detail: str = "") -> bool:
         if status == row["status"] and text == row["status_text"]:
             return False
         if row["status"] == "delivered" and status != "delivered" and via == "page":
             return False  # a tracking page that lags behind doesn't un-deliver a parcel
         history = json.loads(row["history"] or "[]")
         history.append({"ts": ts, "status": status, "text": text, "via": via})
-        self.db.execute("UPDATE deliveries SET status = ?, status_text = ?, updated = ?, history = ? WHERE id = ?",
-                        (status, text, ts, json.dumps(history[-30:]), row["id"]))
+        delivered_at = delivered_time(detail or text, ts, self.settings.tz) if status == "delivered" else None
+        if status == "delivered" and row["status"] == "delivered" and row["delivered_at"]:
+            delivered_at = row["delivered_at"]  # keep the first report of the delivery
+        self.db.execute("UPDATE deliveries SET status = ?, status_text = ?, updated = ?, history = ?, delivered_at = ? "
+                        "WHERE id = ?", (status, text, ts, json.dumps(history[-30:]), delivered_at, row["id"]))
         if status != row["status"]:
             diag.event("deliveries", f"{row['item'] or row['retailer'] or 'parcel'}: {LABELS.get(row['status'])} → "
                                      f"{LABELS[status]}", via=via, text=text)
@@ -512,6 +595,44 @@ class Deliveries:
                 and " ".join(i.casefold().split()[:3]) in " ".join(lowered.split())]
         return real[0] + (f" +{len(real) - 1} more" if len(real) > 1 else "") if real else ""
 
+    def email_status(self, message) -> tuple[str, str]:
+        """A delivery email's status the way on_message reads it (progress tracker first, then the words)."""
+        data = parcel_jsonld(message.html)
+        status, evidence = classify(f"{message.subject}.\n{without_progress_bar(message.body[:3000])}")
+        tracker = step_tracker(message.html)
+        if tracker:
+            status, evidence = tracker, f"{LABELS[tracker]} (from the email's progress tracker)"
+        return data.get("status") or status, evidence
+
+    async def recheck_delivered(self, days: int = 45) -> int:
+        """Re-read the emails of parcels marked delivered recently. Emails with a progress graphic
+        ('Ordered / Dispatched / Out for delivery / Delivered') were read as delivered before this was understood."""
+        from ..google.gmail import parse_message
+        if self.gmail is None:
+            return 0
+        rows = self.db.all("SELECT * FROM deliveries WHERE status = 'delivered' AND thread_id != '' AND updated > ?",
+                           (time.time() - days * 86400,))
+        fixed = 0
+        for row in rows:
+            try:
+                raws = await self.gmail.thread_messages(row["thread_id"])
+            except Exception as error:  # noqa: BLE001
+                diag.debug("deliveries", f"couldn't re-read thread: {type(error).__name__}", id=row["id"])
+                continue
+            messages = sorted((parse_message(r, self.settings.email_body_limit) for r in raws), key=lambda m: m.ts)
+            statuses = [(m, *self.email_status(m)) for m in messages]
+            statuses = [(m, st, ev) for m, st, ev in statuses if st]
+            if not statuses or statuses[-1][1] == "delivered":
+                continue
+            message, status, evidence = statuses[-1]
+            self._set_status(row, status, f"Corrected: {evidence}", "email (re-read)", message.ts)
+            self.db.execute("UPDATE deliveries SET active = 1, poll = CASE WHEN tracking_url != '' AND poll_note = '' "
+                            "THEN 1 ELSE poll END, delivered_at = NULL WHERE id = ?", (row["id"],))
+            self.quiet(row["id"])
+            fixed += 1
+            diag.event("deliveries", f"corrected {row['item'] or row['retailer']}: not delivered — {LABELS[status]}")
+        return fixed
+
     def quiet(self, delivery_id: int) -> None:
         """Don't notify about changes you've just been shown (a delivery added and checked from chat)."""
         self._pending = [i for i in self._pending if i != delivery_id]
@@ -530,7 +651,12 @@ class Deliveries:
         except (WebError, httpx.HTTPError) as error:
             return self._check_failed(row, f"couldn't open the tracking page ({type(error).__name__}: {error})")
         _, text = page_text(markup)
-        status, evidence = classify(text)
+        if re.search(r"\b(?:sign[ -]?in|log[ -]?in)\b", text[:3000], re.I) and \
+                re.search(r"\b(?:password|email or mobile)\b", text, re.I):
+            return self._check_failed(row, "the tracking page asks you to sign in")
+        tracker = step_tracker(markup)
+        status, evidence = (tracker, f"{LABELS[tracker]} (from the tracking page)") if tracker else \
+            classify(without_progress_bar(text))
         if not status:  # data embedded for the page's JavaScript often holds the status
             for value in JSON_STATUS.findall(markup):
                 status, evidence = classify(value)
@@ -586,7 +712,7 @@ class Deliveries:
                                    or item["status"] in {"attempted", "delayed"}):
                 continue
             who = item["name"] + (f" ({item['retailer']})" if item["retailer"] and item["retailer"] != item["name"] else "")
-            bits = [item["label"]]
+            bits = [item["label"] if item["status"] != "delivered" else f"Delivered {item['delivered_text']}"]
             if item["expected_text"] and item["status"] != "delivered":
                 bits.append(f"expected {item['expected_text']}")
             if item["carrier"]:

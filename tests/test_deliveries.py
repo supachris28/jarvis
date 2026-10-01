@@ -206,6 +206,40 @@ class DeliveryTests(IntegrationBase):
                          "Lakeland Dehumidifier 12L")
         self.assertEqual(self.run_async(d.fill_items()), 0)  # each one is only tried once
 
+    def test_progress_graphics_and_delivery_time(self):
+        from datetime import datetime as dt
+        from pathlib import Path
+        s = self.services
+        d = s.deliveries
+        tracker = (Path(__file__).parent / "fixtures" / "amazon_step_tracker.html").read_text()
+        body = ("Your Account\nhttps://www.amazon.co.uk/your-account\n\nYour package was dispatched!\n\n"
+                "Ordered\nDispatched\nOut for delivery\nDelivered\nArriving tomorrow")
+        amazon = parse_message(self.email("z1", "Amazon.co.uk <shipment-tracking@amazon.co.uk>",
+                                          'Dispatched: "Bamboo chopping board"', body, html=tracker))
+        item = d.get(d.on_message(amazon))
+        self.assertEqual(item["status"], "dispatched")  # the graphic lists "Delivered", but it isn't ticked
+        self.assertIn("progress tracker", item["status_text"])
+        # when it was delivered: the time in the email, on the email's day
+        sent = dt.now(s.settings.tz).replace(hour=18, minute=0, second=0, microsecond=0).timestamp()
+        done = parse_message(self.email("z2", "Royal Mail <no-reply@royalmail.com>", "Your parcel has been delivered",
+                                        "Your parcel AB555555555GB was delivered to your safe place at 14:02.", ts=sent))
+        item = d.get(d.on_message(done))
+        self.assertEqual(item["delivered_text"], "today at 14:02")
+        self.assertEqual(item["label"], "Delivered today")
+        self.assertIn("Delivered today at 14:02", d.summary_lines()[0] + "".join(d.summary_lines()))
+        # parcels wrongly marked delivered by older versions are corrected from their emails
+        s.db.execute("UPDATE deliveries SET status = 'delivered', status_text = 'Delivered', active = 0 WHERE thread_id = 'tz1'")
+
+        class Thread:
+            async def thread_messages(self, thread_id):
+                return [self_email] if thread_id == "tz1" else []
+        self_email = self.email("z1", "Amazon.co.uk <shipment-tracking@amazon.co.uk>", 'Dispatched: "Bamboo chopping board"',
+                                body, html=tracker)
+        d.gmail = Thread()
+        self.assertEqual(self.run_async(d.recheck_delivered()), 1)
+        fixed = s.db.one("SELECT * FROM deliveries WHERE thread_id = 'tz1'")
+        self.assertEqual((fixed["status"], fixed["active"], fixed["delivered_at"]), ("dispatched", 1, None))
+
     def test_chat(self):
         s = self.services
 
