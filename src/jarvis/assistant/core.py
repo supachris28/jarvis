@@ -602,6 +602,7 @@ class Assistant:
                         "ON CONFLICT(alias) DO UPDATE SET entity_id = excluded.entity_id, source = 'chat', "
                         "updated = excluded.updated", (name, entity_id, time.time()))
         self.db.queue_note("home_names", "all")
+        self.ha.forget_aliases()
         diag.event("home", f"learned the name “{name}” for {entity_id}")
         return f"🏠 Got it — “{name}” now means `{entity_id}`{note} in Home Assistant commands and questions."
 

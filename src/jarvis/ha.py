@@ -170,6 +170,9 @@ class HomeAssistant:
         self.verify = verify_tls
         self._states: tuple[float, list[dict]] = (0.0, [])
         self.alias_source = None  # async () -> {name: entity_id}; names Chris taught Jarvis ("gas water heater")
+        self._alias_cache: tuple[str, dict[str, str]] | None = None  # (trace id, names)
+        self._name_table_for: list[dict] | None = None   # the states list the table below was built from
+        self._name_table_cache: tuple[list[tuple[str, str, set[str]]], dict[str, int]] | None = None
         self.last_alias_problem: tuple[str, str, list[str]] | None = None
 
     @property
@@ -226,14 +229,27 @@ class HomeAssistant:
         return (await self.match_scored(target, domains))[1]
 
     async def aliases(self) -> dict[str, str]:
+        """Taught names → entity ids. One chat turn or job run asks for these several times (routing, gathering,
+        resolving), and the source reads a vault note each time — so the answer is cached per trace. A new turn
+        always reads afresh, so a name taught or typed into Jarvis/Home names.md counts straight away."""
         if self.alias_source is None:
             return {}
+        from . import diag
+        trace_id = diag.current_trace_id()
+        cached = self._alias_cache
+        if trace_id and cached is not None and cached[0] == trace_id:
+            return cached[1]
         try:
-            return await self.alias_source()
+            names = await self.alias_source()
         except Exception as error:  # noqa: BLE001 — matching still works without them
-            from . import diag
             diag.warning("home", f"couldn't read your taught home names: {type(error).__name__}: {error}")
             return {}
+        if trace_id:
+            self._alias_cache = (trace_id, names)
+        return names
+
+    def forget_aliases(self) -> None:
+        self._alias_cache = None
 
     def find_entity(self, entity_id: str, states: dict[str, dict]) -> tuple[str | None, list[str]]:
         """Resolve an entity ID as typed. Exact match, else one that differs only in _ . - (water_heater.thermostat1
@@ -330,6 +346,24 @@ class HomeAssistant:
                 return {"state": row.get("state"), "at": row.get("last_changed") or row.get("last_updated") or ""}
         return None
 
+    def _name_table(self, states: list[dict]) -> tuple[list[tuple[str, str, set[str]]], dict[str, int]]:
+        """Per-entity word sets and how common each word is, built once per states snapshot (the snapshot is
+        cached for minutes; this used to be recomputed for every chat message)."""
+        if self._name_table_for is states and self._name_table_cache is not None:
+            return self._name_table_cache
+        names: list[tuple[str, str, set[str]]] = []
+        frequency: dict[str, int] = {}
+        for state in states:
+            entity_id = state.get("entity_id", "")
+            if entity_id.split(".", 1)[0] in IGNORED_DOMAINS:
+                continue
+            have = tokens(self.name_of(state)) | tokens(entity_id.split(".", 1)[-1])
+            names.append((entity_id, self.name_of(state), have))
+            for word in have:
+                frequency[word] = frequency.get(word, 0) + 1
+        self._name_table_for, self._name_table_cache = states, (names, frequency)
+        return names, frequency
+
     async def mentioned(self, text: str, timeout: float = 3.0) -> list[tuple[float, str, str]]:
         """Entities a question seems to be about, found by script: (score, entity_id, name), best first.
 
@@ -344,16 +378,7 @@ class HomeAssistant:
         wanted = tokens(text) - QUESTION_WORDS
         if not wanted:
             return []
-        names: list[tuple[str, str, set[str]]] = []
-        frequency: dict[str, int] = {}
-        for state in states:
-            entity_id = state.get("entity_id", "")
-            if entity_id.split(".", 1)[0] in IGNORED_DOMAINS:
-                continue
-            have = tokens(self.name_of(state)) | tokens(entity_id.split(".", 1)[-1])
-            names.append((entity_id, self.name_of(state), have))
-            for word in have:
-                frequency[word] = frequency.get(word, 0) + 1
+        names, frequency = self._name_table(states)
         found = []
         for entity_id, name, have in names:
             hits = {w for w in wanted & have if len(w) >= 3 and not w.isdigit()}  # "1" or "tv2" alone mean nothing
