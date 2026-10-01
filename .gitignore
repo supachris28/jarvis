@@ -11,3 +11,5 @@ deploy/.env
 deploy/certs/
 .env.deploy
 releases/
+.test-build.log
+src/jarvis/web/static/vendor/

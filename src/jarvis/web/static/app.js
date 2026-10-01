@@ -30,7 +30,37 @@ function inline(text) {
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return s;
 }
+/* Full Markdown (tables, code blocks, nested and numbered lists, italics) with marked + DOMPurify, which the Docker
+   build vendors into /static/vendor. Without them (e.g. running from source) the small renderer below is used. */
+let richReady = false;
+function richMarkdown(text) {
+  if (!richReady) {
+    marked.use({ gfm: true, breaks: true, extensions: [{
+      name: "wikilink", level: "inline",
+      start(src) { const i = src.indexOf("[["); return i < 0 ? undefined : i; },
+      tokenizer(src) {
+        const m = /^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/.exec(src);
+        return m ? { type: "wikilink", raw: m[0], target: m[1], alias: m[2] } : undefined;
+      },
+      renderer(token) {
+        const href = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(token.target)}`;
+        return `<a href="${esc(href)}">${esc(token.alias || token.target.split("/").pop())}</a>`;
+      },
+    }] });
+    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+      if (node.tagName === "A" && /^https?:/i.test(node.getAttribute("href") || "")) {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener");
+      }
+    });
+    richReady = true;
+  }
+  return DOMPurify.sanitize(marked.parse(String(text)), { ALLOWED_URI_REGEXP: /^(?:https?|obsidian|mailto):/i });
+}
 function markdown(text) {
+  if (window.marked && window.DOMPurify) {
+    try { return richMarkdown(text); } catch { /* fall back to the simple renderer */ }
+  }
   const out = [];
   let list = null;
   for (const line of String(text).split("\n")) {
@@ -233,17 +263,39 @@ $("#chat-form").addEventListener("submit", async (event) => {
   if (meta && meta.model === false) foot.push('<span class="tag warn">model offline</span>');
   sources.slice(0, 8).forEach((s) => foot.push(`<a class="src" href="${esc(s.url)}" ${(s.url || "").startsWith("http") ? 'target="_blank" rel="noopener"' : ""}>${esc(s.label)}</a>`));
   if (foot.length) bubble.insertAdjacentHTML("beforeend", `<div class="foot">${foot.join(" ")}</div>`);
-  if (meta && meta.route === "web" && sources.length) {  // make [1], [2] citations clickable
-    body.innerHTML = body.innerHTML.replace(/\[(\d{1,2})\]/g, (m, n) => {
-      const source = sources.find((s) => s.label.startsWith(`[${n}]`));
-      return source ? `<a class="cite" href="${esc(source.url)}" target="_blank" rel="noopener">[${n}]</a>` : m;
-    });
-  }
+  if (meta && meta.route === "web" && sources.length) linkCitations(body, sources);
   if (text.trim()) addSpeakButton(bubble, text);
   if (traceId) addDetailsButton(bubble, traceId);
   $("#send").disabled = false;
   if ((voiceOn() || (meta && meta.speak)) && text.trim()) speak(text, bubble.querySelector("button.speak"));  // "read me …" speaks
 });
+
+/* [1], [2] in a web answer → links to its sources. Only text nodes are touched, never attributes or code. */
+function linkCitations(root, sources) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (/\[\d{1,2}\]/.test(node.nodeValue) && !node.parentElement.closest("a, code, pre")) nodes.push(node);
+  }
+  for (const node of nodes) {
+    const parts = document.createDocumentFragment();
+    let last = 0;
+    node.nodeValue.replace(/\[(\d{1,2})\]/g, (match, n, offset) => {
+      const source = sources.find((s) => s.label.startsWith(`[${n}]`));
+      if (!source || !/^https?:/i.test(source.url || "")) return match;
+      parts.append(node.nodeValue.slice(last, offset));
+      const link = document.createElement("a");
+      Object.assign(link, { className: "cite", href: source.url, target: "_blank", rel: "noopener", textContent: match });
+      parts.append(link);
+      last = offset + match.length;
+      return match;
+    });
+    if (!last) continue;
+    parts.append(node.nodeValue.slice(last));
+    node.replaceWith(parts);
+  }
+}
 
 /* ---------- voice ---------- */
 const audio = new Audio();

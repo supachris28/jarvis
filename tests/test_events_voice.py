@@ -64,6 +64,18 @@ class ExtractTests(IntegrationBase.__mro__[1]):  # plain unittest.TestCase
         self.assertEqual(events[0].notes, "Bring a cardand a smile")
         self.assertEqual(parse_ics(ICS.replace("END:VEVENT", "STATUS:CANCELLED\nEND:VEVENT"), TZ), [])
 
+    def test_ics_from_abroad_with_quoted_parameters(self):
+        try:
+            import icalendar  # noqa: F401 — the built-in fallback doesn't handle these cases (the Docker test stage has it)
+        except ImportError:
+            self.skipTest("icalendar not installed here")
+        ics = ('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x1\r\nSUMMARY:Call with Boston\r\n'
+               'DTSTART;TZID="America/New_York":20301015T190000\r\nDTEND;TZID="America/New_York":20301015T200000\r\n'
+               'LOCATION;ALTREP="https://example.com/a:b":Zoom\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n')
+        event = parse_ics(ics, TZ)[0]
+        self.assertEqual(event.start[:16], "2030-10-16T00:00")  # 7pm in New York is midnight in London
+        self.assertEqual(event.location, "Zoom")
+
     def test_jsonld(self):
         events = parse_jsonld(JSONLD, TZ)
         self.assertEqual(len(events), 1)

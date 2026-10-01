@@ -89,6 +89,51 @@ def _ics_time(value: str, params: dict, default_tz: tzinfo) -> tuple[str, bool]:
 
 
 def parse_ics(text: str, default_tz: tzinfo) -> list[EventCandidate]:
+    """Events from an iCalendar invitation. Uses the `icalendar` library (quoted parameters, VTIMEZONE blocks and the
+    full Windows → IANA zone map); the small built-in reader below is only a fallback if it isn't installed."""
+    try:
+        from icalendar import Calendar
+    except ImportError:
+        return _parse_ics_builtin(text, default_tz)
+    try:
+        calendar = Calendar.from_ical(text)
+    except Exception:  # noqa: BLE001 — some exporters produce files the library rejects; try the lenient reader
+        return _parse_ics_builtin(text, default_tz)
+    method = str(calendar.get("METHOD", "")).upper()
+    events: list[EventCandidate] = []
+    for component in calendar.walk("VEVENT"):
+        if method == "CANCEL" or str(component.get("STATUS", "")).strip().upper() == "CANCELLED":
+            continue
+        try:
+            start = component.decoded("DTSTART")
+        except (KeyError, ValueError):
+            continue
+        all_day = not isinstance(start, datetime)
+        try:
+            end = component.decoded("DTEND")
+        except (KeyError, ValueError):
+            end = None
+        if end is None:
+            duration = component.get("DURATION")
+            end = start + (duration.dt if duration is not None else timedelta(days=1) if all_day else timedelta(hours=1))
+        events.append(EventCandidate(
+            title=_ics_text(str(component.get("SUMMARY", ""))) or "Event",
+            start=_ics_iso(start, default_tz), end=_ics_iso(end, default_tz), all_day=all_day,
+            location=_ics_text(str(component.get("LOCATION", ""))),
+            notes=_ics_text(str(component.get("DESCRIPTION", "")))[:2000],
+            ical_uid=str(component.get("UID", "")).strip(), confidence=1.0, source="ics"))
+    return events
+
+
+def _ics_iso(value, default_tz: tzinfo) -> str:
+    if not isinstance(value, datetime):
+        return value.isoformat()
+    if value.tzinfo is None:  # "floating" time: the invitation means local time
+        value = value.replace(tzinfo=default_tz)
+    return value.astimezone(default_tz).isoformat()
+
+
+def _parse_ics_builtin(text: str, default_tz: tzinfo) -> list[EventCandidate]:
     events: list[EventCandidate] = []
     method = ""
     current: dict | None = None

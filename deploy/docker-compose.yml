@@ -1,4 +1,4 @@
-# Jarvis + ntfy on the home server, behind SWAG.
+# Jarvis (with Kokoro speech and SearXNG search) on the home server, behind SWAG.
 # Copy this folder to the server (e.g. /opt/jarvis), create .env from .env.server.example, then:
 #   docker login registry.keeeys.uk
 #   docker compose pull && docker compose up -d
@@ -14,7 +14,6 @@ services:
       # The Obsidian vault inside Nextcloud's data folder. Read-only: Jarvis writes through Nextcloud's
       # WebDAV API so Nextcloud (and your devices) see every change immediately.
       - ${VAULT_HOST_PATH:-./vault}:/vault:ro
-      - ./certs:/certs:ro            # only for the old Obsidian-on-PC setup
     group_add: ["${VAULT_GID:-33}"]  # lets Jarvis read Nextcloud's files (www-data = 33)
     networks: [swag]
     read_only: true
@@ -44,7 +43,6 @@ services:
 
 volumes:
   jarvis-data:
-  ntfy-data:
 
 networks:
   swag:

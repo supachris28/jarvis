@@ -20,6 +20,18 @@ DOCKER="${DEPLOY_DOCKER:-docker}"
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/jarvis/__init__.py)"
 step() { printf '\n=== %s  %s\n' "$(date +%H:%M:%S)" "$*"; }
 
+step "Test Jarvis $VERSION (the full suite, inside the image with its real libraries)"
+if [ "${SKIP_TESTS:-}" = "1" ]; then
+    echo "SKIP_TESTS=1 — skipping the test stage"
+else
+    if ! docker buildx build --platform "${PLATFORM:-linux/amd64}" --target test --progress plain . > .test-build.log 2>&1; then
+        tail -60 .test-build.log >&2
+        echo "Tests failed — not deploying. Full output: .test-build.log" >&2
+        exit 1
+    fi
+    grep -E "^#[0-9]+ .*(Ran [0-9]+ tests|OK|FAILED)" .test-build.log | tail -3 || true
+fi
+
 step "Build and push Jarvis $VERSION"
 TAG="${TAG:-$VERSION-$(date +%Y%m%d-%H%M)}" sh ./scripts/build-push.sh
 

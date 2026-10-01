@@ -9,10 +9,11 @@ __pycache__
 **/__pycache__
 *.pyc
 docs
-tests
 deploy
 scripts
 *.py
 !src/**/*.py
+!tests/**/*.py
 releases
 *.tar.gz
+.test-build.log
