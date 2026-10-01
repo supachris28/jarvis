@@ -49,17 +49,17 @@ def detail_line(what: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def _subject(clause: str) -> str:
+def _subject(clause: str, today: date) -> str:
     """What a clause was about, for 'it' in the next one."""
     parts = annotation_parts(clause)
     if parts:
         what, target = parts
-        _, rest = _find_date(target, date.today())
+        _, rest = _find_date(target, today)
         target = re.sub(r"\s+", " ", re.sub(r"\b(on|at|for|this|next)\b\s*$", "", rest.strip(), flags=re.I)).strip()
         line = detail_line(what)
         return f"the {target} {line[:1].lower() + line[1:]}".replace(":", "") if target else line
     text = re.sub(rf"^{ACTION}\s*", "", clause, flags=re.I)
-    _, text = _find_date(text, date.today())
+    _, text = _find_date(text, today)
     text = _find_times(text)[3]
     text = re.sub(r"\b(to|in|on)\s+(my|the)\s+(\w+\s+)?(calendar|diary)\b", " ", text, flags=re.I)
     return re.sub(r"\s+", " ", text).strip(" ,.")
@@ -80,6 +80,6 @@ def link_clauses(parts: list[str], now: datetime) -> list[str]:
                 part = re.sub(r"(\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", rf"\1 on {day:%A} {day.day} {day:%B}", part,
                               count=1, flags=re.I)
         day = found or day
-        subject = _subject(part) or subject
+        subject = _subject(part, now.date()) or subject
         linked.append(part)
     return linked

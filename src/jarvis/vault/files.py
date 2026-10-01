@@ -319,6 +319,26 @@ class FileVault:
                 results.append({"filename": row["path"], "score": score, "matches": []})
         return sorted(results, key=lambda r: -r["score"])[:25]
 
+    async def paths_mentioning(self, words: list[str], folder: str = "") -> set[str] | None:
+        """Every note (under `folder`) whose text contains any of `words` — no result limit. None without FTS."""
+        if not self.fts:
+            return None
+        match = " OR ".join('"' + w.replace('"', "") + '"' for w in words)
+        rows = self.db.all("SELECT path FROM vault_fts WHERE vault_fts MATCH ? AND path LIKE ?", (match, folder + "%"))
+        return {r["path"] for r in rows}
+
+    async def frontmatter_under(self, folder: str) -> list[tuple[str, dict]]:
+        """(path, properties) for every note under `folder`, from the index — no file reads."""
+        self._check_root()
+        found = []
+        for row in self.db.all("SELECT path, frontmatter FROM vault_notes WHERE path LIKE ? ESCAPE '\\'",
+                               (folder.replace("%", "\\%").replace("_", "\\_") + "%",)):
+            try:
+                found.append((row["path"], json.loads(row["frontmatter"]) or {}))
+            except ValueError:
+                continue
+        return found
+
     async def people_notes(self, folder: str = "People/") -> list[tuple[str, str, list[str]]]:
         """(path, title, aliases) for every note under People/ — including ones you wrote yourself."""
         self._check_root()
@@ -344,14 +364,14 @@ class FileVault:
         self._check_root()
         if not re.fullmatch(r"[\w-]+", field):
             return []
-        wanted = str(value).casefold()
-        found = []
-        for row in self.db.all("SELECT path, frontmatter FROM vault_notes"):
-            current = json.loads(row["frontmatter"]).get(field)
-            values = current if isinstance(current, list) else [current]
-            if any(str(v).casefold() == wanted for v in values if v is not None):
-                found.append(row["path"])
-        return found
+        # in SQL: a scalar property, or any item of a list property, equal to the value (case-insensitive)
+        rows = self.db.all(
+            "SELECT DISTINCT n.path FROM vault_notes n WHERE json_valid(n.frontmatter) AND ("
+            " lower(CAST(json_extract(n.frontmatter, '$.' || ?) AS TEXT)) = lower(?)"
+            " OR EXISTS (SELECT 1 FROM json_each(n.frontmatter, '$.' || ?) j"
+            "            WHERE json_type(n.frontmatter, '$.' || ?) = 'array' AND lower(CAST(j.value AS TEXT)) = lower(?)))"
+            " ORDER BY n.path", (field, str(value), field, field, str(value)))
+        return [r["path"] for r in rows]
 
     async def backlinks(self, path: str) -> list[str]:
         self._check_root()

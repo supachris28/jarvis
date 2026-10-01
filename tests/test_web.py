@@ -128,6 +128,21 @@ class WebTests(IntegrationBase):
         self.assertEqual(text.strip(), "Hello from the fake model.")
         self.assertEqual(len(self.search.queries), searches)
 
+    def test_readable_page_text(self):
+        from jarvis.websearch import page_text
+        try:
+            import trafilatura  # noqa: F401 — installed in the image; the simple stripper is used without it
+        except ImportError:
+            self.skipTest("trafilatura not installed here")
+        article = " ".join(f"Sentence {n} about how long to boil an egg for a firm yolk." for n in range(12))
+        markup = (f"<html><head><title>Eggs</title></head><body><nav><a href='/'>Home</a> <a href='/shop'>Shop now</a> "
+                  f"<a href='/login'>Sign in to your account</a></nav><article><h1>Boiling eggs</h1><p>{article}</p>"
+                  f"<p>{article}</p></article><footer>Copyright Example Ltd · Privacy · Cookies</footer></body></html>")
+        title, text = page_text(markup, readable=True)
+        self.assertEqual(title, "Eggs")
+        self.assertIn("firm yolk", text)
+        self.assertNotIn("Sign in to your account", text)
+
     def test_search_off(self):
         self.settings.web_search_provider = "off"
         events = []

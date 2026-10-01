@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
+from .event_text import _find_date
+
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 WD = r"(mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?:day|nesday|sday|urday|rsday)?"
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
@@ -45,9 +47,6 @@ PATTERNS = [
     ("repeat_weekday", re.compile(rf"\bevery\s+{WD}\b", re.I)),
     ("repeat", re.compile(r"\b(every\s+day|daily|every\s+weekday|weekdays|on\s+weekdays|every\s+week|weekly|"
                           r"every\s+month|monthly|every\s+morning|every\s+evening|every\s+night)\b", re.I)),
-    ("date_dm", re.compile(rf"\b(?:on\s+)?(?:{WD}\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{MON}\b", re.I)),
-    ("date_md", re.compile(rf"\b(?:on\s+)?{MON}\s+(\d{{1,2}})(?:st|nd|rd|th)?\b", re.I)),
-    ("date_num", re.compile(r"\b(?:on\s+)?(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b")),
     ("day_word", re.compile(r"\b(today|tonight|this\s+evening|this\s+afternoon|this\s+morning|tomorrow(?:\s+(?:morning|afternoon|evening|night))?)\b", re.I)),
     ("weekday", re.compile(rf"\b(?:on\s+|next\s+|this\s+)?{WD}\b", re.I)),
     ("clock", re.compile(r"\b(?:at\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b|\b(?:at\s+)?(\d{1,2})[:.](\d{2})\b|"
@@ -73,6 +72,12 @@ def parse_when(text: str, now: datetime) -> When:
         nonlocal remaining
         remaining = remaining[:match.start()] + " " + remaining[match.end():]
 
+    # calendar dates (14 October 2027, 31/10, 2026-10-31, October 31st) come from the same reader as calendar
+    # requests, so both understand the same forms — years included
+    found, rest = _find_date(remaining, now.date(), kinds=("iso", "num", "dmy", "mdy"))
+    if found is not None:
+        target_date = found
+        remaining = re.sub(r"\bon\s+(?=\s|$)", " ", rest).strip() or rest
     for kind, pattern in PATTERNS:
         match = pattern.search(remaining)
         if not match:
@@ -104,25 +109,6 @@ def parse_when(text: str, now: datetime) -> When:
                 for part, value in PART_OF_DAY.items():
                     if part in phrase:
                         default_clock = value
-        elif kind in {"date_dm", "date_md", "date_num"}:
-            if target_date is not None:
-                continue
-            try:
-                if kind == "date_dm":
-                    day, month = int(match.group(2)), MONTHS.index(match.group(3).casefold()[:3]) + 1
-                    year = now.year
-                elif kind == "date_md":
-                    month, day = MONTHS.index(match.group(1).casefold()[:3]) + 1, int(match.group(2))
-                    year = now.year
-                else:  # UK order: day/month
-                    day, month = int(match.group(1)), int(match.group(2))
-                    year = int(match.group(3)) if match.group(3) else now.year
-                    year = year + 2000 if year < 100 else year
-                target_date = date(year, month, day)
-                if target_date < now.date() and not (kind == "date_num" and match.group(3)):
-                    target_date = date(year + 1, month, day)
-            except ValueError:
-                continue
         elif kind == "day_word":
             if target_date is not None:
                 continue

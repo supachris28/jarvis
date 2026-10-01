@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import logging
 import time
 from pathlib import Path
@@ -603,7 +604,8 @@ def run() -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    uvicorn.run(create_app(), host="0.0.0.0", port=8080, proxy_headers=True, forwarded_allow_ips="*",
+    uvicorn.run(create_app(), host="0.0.0.0", port=8080, proxy_headers=True,
+                forwarded_allow_ips=os.environ.get("JARVIS_TRUSTED_PROXIES", "*"),
                 log_level="info")
 
 

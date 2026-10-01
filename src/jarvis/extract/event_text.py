@@ -76,8 +76,12 @@ def _cut(text: str, match: re.Match) -> str:
     return text[:match.start()] + " " + text[match.end():]
 
 
-def _find_date(text: str, today: date) -> tuple[date | None, str]:
+def _find_date(text: str, today: date, kinds: tuple[str, ...] | None = None) -> tuple[date | None, str]:
+    """The first date in `text` and the text without it. `kinds` limits which forms are looked for
+    (iso, num, dmy, mdy, word, weekday) — reminders use only the calendar-date forms and read days themselves."""
     for kind, pattern in DATE_PATTERNS:
+        if kinds is not None and kind not in kinds:
+            continue
         for match in pattern.finditer(text):
             try:
                 if kind == "iso":

@@ -102,7 +102,7 @@ class FileVaultUnitTests(IntegrationBase.__mro__[1]):
         self.assertIsNone(run(self.vault.get_note("Missing.md")))
         self.assertTrue(run(self.vault.health())["ok"])
         # no temp files left behind, and files are group-writable for Nextcloud
-        self.assertEqual([p.name for p in (self.root / "Notes").iterdir()], sorted(["Hiking.md", "Other.md"]) or [])
+        self.assertEqual(sorted(p.name for p in (self.root / "Notes").iterdir()), ["Hiking.md", "Other.md"])
         self.assertEqual(oct((self.root / "Notes/Hiking.md").stat().st_mode & 0o777), "0o664")
 
     def test_external_edits_and_safety(self):

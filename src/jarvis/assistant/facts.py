@@ -138,14 +138,28 @@ async def collect_birthdays(db, vault, people_index: list[tuple[str, str]]) -> t
             paths = [(path, title) for path, title, _ in await people_notes()]
         except Exception:  # noqa: BLE001 — vault offline: contacts still answer
             paths = []
-    for path, title in paths:
+    # With the files backend the properties come from the index, and only notes whose text mentions a birthday
+    # (found by full-text search) are read — not every People note on every question and every brief.
+    indexed = getattr(vault, "frontmatter_under", None)
+    properties: dict[str, dict] = {}
+    with_lines: set[str] | None = None
+    if indexed is not None:
         try:
-            text = await vault.get_text(path)
-        except Exception:  # noqa: BLE001
-            continue
-        if not text:
-            continue
-        frontmatter, body = split_frontmatter(text)
+            properties = dict(await indexed("People/"))
+            with_lines = await vault.paths_mentioning(["birthday", "born", "dob", "bday", "birth"], "People/")
+        except Exception:  # noqa: BLE001 — fall back to reading every note
+            properties, with_lines = {}, None
+    for path, title in paths:
+        if with_lines is not None and path in properties and path not in with_lines:
+            frontmatter, body = properties[path], ""
+        else:
+            try:
+                text = await vault.get_text(path)
+            except Exception:  # noqa: BLE001
+                continue
+            if not text:
+                continue
+            frontmatter, body = split_frontmatter(text)
         frontmatter = frontmatter or {}
         relation = frontmatter.get("relation") or frontmatter.get("relationship") or ""
         relation = ", ".join(map(str, relation)) if isinstance(relation, list) else str(relation)
@@ -172,8 +186,8 @@ async def collect_birthdays(db, vault, people_index: list[tuple[str, str]]) -> t
         names = {_key(n): p for n, p in people_index}
         for hit in hits[:25]:
             path = hit.get("filename", "")
-            if path.startswith("People/"):
-                continue
+            if path.startswith(("People/", "Jarvis/", "Journal/")):
+                continue  # People notes are read above; Jarvis's own notes (briefs, journals) would echo themselves
             text = await vault.get_text(path) or ""
             for match in MENTION.finditer(text):
                 name = match.group("name")

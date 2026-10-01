@@ -199,6 +199,19 @@ class VaultWriter:
 
     async def refresh_people(self) -> int:
         """Learn which existing People notes own which email addresses."""
+        indexed = getattr(self.vault, "frontmatter_under", None)
+        if indexed is not None:  # files backend: one query on the index instead of reading every note
+            found = 0
+            for full, frontmatter in await indexed("People/"):
+                emails = frontmatter.get("emails") or frontmatter.get("email") or []
+                for email in [emails] if isinstance(emails, str) else emails:
+                    if isinstance(email, str) and "@" in email:
+                        self.db.execute(
+                            "INSERT INTO people (email, name, path) VALUES (?, ?, ?) "
+                            "ON CONFLICT(email) DO UPDATE SET path = excluded.path, name = excluded.name",
+                            (email.strip().casefold(), full.rsplit("/", 1)[-1].removesuffix(".md"), full))
+                        found += 1
+            return found
         found = 0
         folders = ["People/"]
         seen_folders: set[str] = set()

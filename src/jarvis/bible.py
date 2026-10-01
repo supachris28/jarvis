@@ -60,6 +60,8 @@ def find_reference(prompt: str) -> str | None:
                   prompt[:match.start()] + prompt[match.end():], flags=re.I).strip(" ?.!,")
     if rest and not ASK.search(prompt):
         return None
+    if rest and len(match.group("book").replace(" ", "")) < 3 and match.group("book").casefold() not in {"1jn", "2jn", "3jn"}:
+        return None  # "is 3 enough?" isn't Isaiah 3: short abbreviations only count on their own
     book = NAMES[re.sub(r"\s+", " ", match.group("book").casefold())]
     chapter = int(match.group("chapter"))
     if not 1 <= chapter <= 150:

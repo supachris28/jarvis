@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Awaitable, Callable
 
 import httpx
@@ -52,14 +53,17 @@ class MCPClient:
             return None
         raw = response.text
         if "text/event-stream" in response.headers.get("Content-Type", ""):
-            for line in raw.splitlines():
-                if line.startswith("data:"):
-                    try:
-                        event = json.loads(line[5:].strip())
-                    except ValueError:
-                        continue
-                    if event.get("id") == body["id"]:
-                        return self._result(event)
+            # an SSE event's data may span several "data:" lines; events are separated by a blank line
+            for block in re.split(r"\r?\n\r?\n", raw):
+                data = "\n".join(line[5:].lstrip() for line in block.splitlines() if line.startswith("data:"))
+                if not data:
+                    continue
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("id") == body["id"]:
+                    return self._result(event)
             raise MCPError(f"{self.name} stream ended without a response.")
         try:
             return self._result(json.loads(raw))

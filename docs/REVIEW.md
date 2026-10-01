@@ -136,6 +136,34 @@ The image is already small and well locked down (slim base, deps layer before `C
 - Pin the base image by digest (`python:3.12-slim@sha256:…`), and pin `kokoro` and `searxng` to versions rather than `:latest`; neither has a healthcheck.
 - `compose.yml` still declares an `ntfy-data` volume with no ntfy service, and the `./certs` mount is only for the retired Obsidian REST backend. If you retire `VAULT_BACKEND=obsidian` for good, `vault/client.py` (177 lines), the `search_jsonlogic`/`search_dql` shims in `files.py`, the `OBSIDIAN_*` settings and the `/certs` mount can all go.
 
+## Status after v0.9.5
+
+| Recommendation | Status |
+| --- | --- |
+| Merge the review branch | Done (v0.9.0). |
+| `icalendar` for invites | Done (v0.9.4), with the built-in reader kept as a fallback. A test for quoted parameters and foreign time zones runs in the Docker test stage. |
+| Markdown renderer in the browser | Done (v0.9.4): marked 18 + DOMPurify 3, vendored by a Docker build stage; citation links touch text nodes only. |
+| HTML extractor | Web pages: trafilatura (v0.9.5), used for internet answers; tracking pages keep the plain stripper. Email bodies: **not changed** — selectolax would change the text every email parser reads (dates, events, deliveries) and could not be checked outside the image. |
+| `watchfiles` for the vault index | Not done yet. |
+| Merge the date grammars | Done for reminders (v0.9.5): `when.py` reads calendar dates with `event_text._find_date`, so years work ("14 October 2027"). Birthdays keep their own parser on purpose (year-unknown dates). |
+| Calendar questions from the local table | Done (v0.9.5): the next three weeks come from `events`; Google is only searched across the wider range. |
+| `collect_birthdays` | Done (v0.9.5): properties from the index; only People notes that mention a birthday are read; `Jarvis/` and `Journal/` excluded from mentions. |
+| `match_people` | Done (v0.9.5): one compiled pattern per people list (cached). |
+| `refresh_people`, `notes_where` | Done (v0.9.5): index queries / `json_extract`. |
+| `fetch_page` bytearray | Done (v0.9.5). |
+| `PRAGMA synchronous=NORMAL` | Open — a durability decision for Chris. |
+| Faster test suite | Not done. |
+| Notification retry after a failed send | Done (v0.9.5). |
+| Brief skipped if Jarvis was down in the morning | Left as is (product decision). |
+| Bible short aliases | Done (v0.9.5): one- and two-letter abbreviations only count when the message is just the reference. |
+| `forwarded_allow_ips` | Configurable with `JARVIS_TRUSTED_PROXIES` (default `*`, as before). |
+| WebDAV `If-Match` | Left as is. |
+| `compound.py` timezone | Done (v0.9.5). |
+| MCP multi-line SSE `data:` | Done (v0.9.5). |
+| Dockerfile: compile at build, test stage | Done (v0.9.4): `deploy.sh` builds `--target test` first and stops on failure. |
+| Pin base images by digest; healthchecks for kokoro/searxng | Not done (needs the digests from your registry). |
+| Compose: drop `ntfy-data` and `./certs` | Done in the repo template (the server's copy needs the same edit if you want it). |
+
 ## Suggested order
 
 1. Merge this branch (everything on it is tested and dependency-free).

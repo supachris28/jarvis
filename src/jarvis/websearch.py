@@ -61,10 +61,16 @@ def query_terms(text: str) -> list[str]:
 BLOCK_TAGS = re.compile(r"(?is)<(script|style|noscript|svg|nav|header|footer|aside|form|iframe|template)\b.*?</\1>")
 
 
-def page_text(markup: str) -> tuple[str, str]:
-    """(title, main text) from HTML, preferring <article>/<main> when present."""
+def page_text(markup: str, readable: bool = False) -> tuple[str, str]:
+    """(title, main text) from HTML. With `readable`, the article is extracted by trafilatura (navigation, cookie
+    banners and comments removed) when it's installed and finds enough text; otherwise a simple tag stripper that
+    prefers <article>/<main> is used. Tracking pages keep the plain stripper: short status lines aren't boilerplate."""
     title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", markup)
     title = html.unescape(re.sub(r"\s+", " ", title_match.group(1))).strip() if title_match else ""
+    if readable:
+        article = _readable(markup)
+        if article:
+            return title, article
     markup = BLOCK_TAGS.sub(" ", markup)
     main = re.search(r"(?is)<(article|main)\b[^>]*>(.*)</\1>", markup)
     if main and len(main.group(2)) > 500:
@@ -74,6 +80,19 @@ def page_text(markup: str) -> tuple[str, str]:
     text = re.sub(r"[ \t\xa0]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return title, text.strip()
+
+
+def _readable(markup: str) -> str:
+    try:
+        import trafilatura
+    except ImportError:
+        return ""
+    try:
+        text = trafilatura.extract(markup, include_comments=False, include_tables=True, favor_precision=True) or ""
+    except Exception:  # noqa: BLE001 — a page the library can't handle falls back to the simple stripper
+        return ""
+    text = re.sub(r"\s*\n\s*", "\n\n", text).strip()  # one paragraph per block, as the simple stripper gives
+    return text if len(text) >= 200 else ""
 
 
 def best_passages(text: str, question: str, count: int = 3, size: int = 700) -> list[str]:
@@ -142,13 +161,13 @@ async def fetch_page(url: str, allow_private: bool = False, timeout: float = 8.0
                 content_type = response.headers.get("content-type", "")
                 if "html" not in content_type and "text/plain" not in content_type:
                     raise WebError(f"not a web page ({content_type or 'unknown type'})")
-                body = b""
+                body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body += chunk
                     if len(body) > MAX_PAGE_BYTES:
                         break
                 encoding = response.encoding or "utf-8"
-                return url, body.decode(encoding, errors="replace")
+                return url, bytes(body).decode(encoding, errors="replace")
         raise WebError("too many redirects")
 
 
@@ -257,7 +276,7 @@ class WebSearch:
         async def read(result: Result) -> None:
             try:
                 final_url, markup = await fetch_page(result.url, self.settings.web_allow_private)
-                title, text = page_text(markup)
+                title, text = page_text(markup, readable=True)
                 result.passages = best_passages(text, question)
                 if final_url != result.url:
                     result.url = final_url

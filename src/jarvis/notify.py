@@ -95,9 +95,15 @@ class Notifier:
                 (time.time(), dedupe, title, message, priority, url or self.settings.public_url),
             )
         except sqlite3.IntegrityError:
-            diag.debug("notify", f"duplicate suppressed: {title}", dedupe=dedupe)
-            return "duplicate"
-        note_id = cursor.lastrowid
+            failed = self.db.one("SELECT id FROM notifications WHERE dedupe = ? AND status = 'failed'", (dedupe,))
+            if failed is None:
+                diag.debug("notify", f"duplicate suppressed: {title}", dedupe=dedupe)
+                return "duplicate"
+            # the earlier attempt failed (ntfy down): this is a retry, not a duplicate
+            self.db.execute("UPDATE notifications SET status = 'queued', error = '', ts = ? WHERE id = ?",
+                            (time.time(), failed["id"]))
+            cursor = None
+        note_id = cursor.lastrowid if cursor is not None else failed["id"]
         now = datetime.now(self.settings.tz)
         recent = self.db.one("SELECT COUNT(*) AS n FROM notifications WHERE status = 'sent' AND ts > ?",
                              (time.time() - 3600,))["n"]

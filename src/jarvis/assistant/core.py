@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
 import json
 import logging
 import re
@@ -120,6 +121,30 @@ CLAIMED_ACTION = re.compile(r"\bI(?:'ve| have)\s+(?:now\s+|just\s+|successfully\
                             r"updated|put|replied|forwarded)\b", re.I)
 READ_ALOUD = re.compile(r"^\s*(?:please\s+|can you\s+|could you\s+)?(?:read|recite)\s+(?:me\b|out\b|aloud\b|to me\b)",
                         re.I)
+
+
+@functools.lru_cache(maxsize=8)
+def _unique_firsts(index: tuple[tuple[str, str], ...]) -> frozenset[tuple[str, str]]:
+    """(first name, path) for first names (3+ letters) that only one person in the index has."""
+    owners: dict[str, set[str]] = {}
+    for name, path in index:
+        if " " in name:
+            owners.setdefault(name.split()[0].casefold(), set()).add(path)
+    return frozenset((first, next(iter(paths))) for first, paths in owners.items() if len(paths) == 1 and len(first) >= 3)
+
+
+@functools.lru_cache(maxsize=8)
+def _people_matcher(index: tuple[tuple[str, str], ...]) -> tuple[re.Pattern | None, frozenset[str]]:
+    """One compiled pattern for every name, alias and unique first name (built once per people list, not per
+    message). Single-word names that are also ordinary words are returned separately for the stricter check."""
+    word_names = frozenset(n.casefold() for n, _ in index if " " not in n
+                           and (n.casefold() in WORD_NAMES or n.casefold() in STOPWORDS))
+    terms = {n.casefold() for n, _ in index if " " in n or n.casefold() not in word_names}
+    terms |= {first for first, _ in _unique_firsts(index)}
+    if not terms:
+        return None, word_names
+    alternation = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+    return re.compile(rf"(?<![\w-])(?:{alternation})(?![\w-])"), word_names
 
 
 _PART_OF_MANY: contextvars.ContextVar[bool] = contextvars.ContextVar("jarvis_part_of_many", default=False)
@@ -964,33 +989,26 @@ class Assistant:
     @staticmethod
     def match_people(text: str, index: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """Notes of people named in `text`: full names/aliases, or a first name only one person has."""
-        lowered = text.casefold()
+        matcher, word_names = _people_matcher(tuple(index))
+        hits = {m.group(0) for m in matcher.finditer(text.casefold())} if matcher is not None else set()
         found: dict[str, str] = {}
-        first_names: dict[str, set[str]] = {}
+        firsts: dict[str, str] = {}
         for name, path in index:
-            if " " in name:
-                first_names.setdefault(name.split()[0].casefold(), set()).add(path)
-        for name, path in index:
-            if " " in name:
-                if re.search(rf"(?<![\w-]){re.escape(name.casefold())}(?![\w-])", lowered):
-                    found.setdefault(path, "person name")
-            elif name.casefold() not in WORD_NAMES and name.casefold() not in STOPWORDS:
-                # one-word names/aliases ("Jen", "Mum"): any case — people type "who is jen"
-                if re.search(rf"(?<![\w-]){re.escape(name.casefold())}(?![\w-])", lowered):
-                    found.setdefault(path, "person name")
-            else:
+            key = name.casefold()
+            if key in hits and (" " in name or key not in word_names):
+                found.setdefault(path, "person name")
+            elif key in word_names and name[:1].isupper():
                 # names that are also ordinary words ("Will", "May") must be capitalised and not start a
                 # sentence, so "will it rain?" isn't about a person called Will
                 for match in re.finditer(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
                     before = text[:match.start()]
-                    sentence_start = not before.strip(" \t\"'“(") or bool(re.search(r"[.!?\n]\s*$", before))
-                    if name[:1].isupper() and not sentence_start:
+                    if before.strip(" \t\"'“(") and not re.search(r"[.!?\n]\s*$", before):
                         found.setdefault(path, "person name")
                         break
-        for name, path in index:
-            first = name.split()[0].casefold()
-            if (" " in name and len(first) >= 3 and len(first_names.get(first, ())) == 1 and path not in found
-                    and re.search(rf"(?<![\w-]){re.escape(first)}(?![\w-])", lowered)):
+            if " " in name:
+                firsts[name.split()[0].casefold()] = path
+        for first, path in firsts.items():
+            if first in hits and path not in found and (first, path) in _unique_firsts(tuple(index)):
                 found.setdefault(path, "person first name")
         return list(found.items())
 
@@ -1047,9 +1065,24 @@ class Assistant:
     async def gather_calendar(self, query: str) -> tuple[str, list[dict]]:
         now = datetime.now(timezone.utc)
         events: dict[str, dict] = {}
+        # the next three weeks come from the events the calendar job already keeps (no API call); Google is only
+        # asked for a search across the wider range
+        local = self.db.all("SELECT * FROM events WHERE start >= ? AND start < ? ORDER BY start LIMIT 300",
+                            ((now - timedelta(days=1)).date().isoformat(), (now + timedelta(days=21)).date().isoformat()))
+        synced = self.db.get("calendar.last_run") or self.db.one("SELECT 1 FROM events LIMIT 1")
+        for row in local:
+            try:
+                attendees = json.loads(row["attendees"] or "[]")
+            except ValueError:
+                attendees = []
+            events[row["event_id"]] = {"event_id": row["event_id"], "summary": row["summary"], "start": row["start"],
+                                       "end": row["end"], "location": row["location"], "status": row["status"],
+                                       "attendees": attendees if isinstance(attendees, list) else [],
+                                       "html_link": row["html_link"]}
         for calendar_id in self.settings.google_calendar_ids:
-            for event in await self.calendar.upcoming(calendar_id, days=21):
-                events[event["event_id"]] = event
+            if not synced:  # the calendar job hasn't run yet
+                for event in await self.calendar.upcoming(calendar_id, days=21):
+                    events[event["event_id"]] = event
             try:
                 for event in await self.calendar.events(calendar_id, now - timedelta(days=180),
                                                         now + timedelta(days=365), query=query, limit=50):

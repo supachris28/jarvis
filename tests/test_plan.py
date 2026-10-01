@@ -23,6 +23,9 @@ TZ = ZoneInfo("Europe/London")
 class ParsingTests(IntegrationBase.__mro__[1]):
     def test_when(self):
         now = datetime(2026, 9, 29, 10, 15, tzinfo=TZ)  # a Tuesday
+        w = parse_when("remind me on 14 October 2027 at 18:30 to renew the passport", now)
+        self.assertEqual((w.at, w.rest.split()), (datetime(2027, 10, 14, 18, 30, tzinfo=TZ),
+                                                  ["remind", "me", "to", "renew", "the", "passport"]))
         w = parse_when("call the garage on Thursday at 9am", now)
         self.assertEqual((w.at, w.rest), (datetime(2026, 10, 1, 9, 0, tzinfo=TZ), "call the garage"))
         w = parse_when("every weekday at 7am turn on the coffee machine", now)
@@ -139,6 +142,8 @@ class PlanTests(IntegrationBase):
         self.assertEqual(bible.find_reference("what does psalm 23 say?"), "psalms 23")
         self.assertIsNone(bible.find_reference("Is Mark 3 coming over?"))
         self.assertIsNone(bible.find_reference("turn on the heating at 7"))
+        self.assertIsNone(bible.find_reference("what does the bill say, is 3 enough?"))  # not Isaiah 3
+        self.assertEqual(bible.find_reference("Ps 23"), "psalms 23")
         asked = []
 
         async def api(request):
