@@ -14,7 +14,7 @@ from datetime import datetime
 from .. import diag
 from ..config import Settings
 from ..db import Database
-from ..google.gmail import Gmail, ParsedMessage, parse_message, thread_url
+from ..google.gmail import Gmail, ParsedMessage, app_email_url, parse_message
 from ..google.oauth import GoogleError
 from ..notify import Notifier
 from ..vault.markdown import link, one_line, safe_name
@@ -199,7 +199,7 @@ class GmailPipeline:
             title=f"Email from {sender}",
             message=f"**{message.subject or '(no subject)'}**\n{one_line(message.snippet, 200)}",
             priority=priority,
-            url=thread_url(message.thread_id, self.db.get("gmail.me", "")),
+            url=app_email_url(message.thread_id, self.settings.public_url),
             dedupe=f"email:{message.message_id}", category="email",
             tags="envelope",
         )

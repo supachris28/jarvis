@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import logging
 import time
 from pathlib import Path
@@ -239,6 +240,14 @@ async def event_sender_unmute(request: Request) -> Response:
         return JSONResponse({"error": "sender required"}, status_code=400)
     request.app.state.services.events.unmute(sender)
     return JSONResponse({"ok": True})
+
+
+async def email_thread(request: Request) -> Response:
+    thread_id = request.path_params["thread_id"]
+    if not re.fullmatch(r"[0-9a-fA-F]{6,32}", thread_id):
+        return JSONResponse({"error": "not a Gmail thread id"}, status_code=400)
+    data = await request.app.state.services.email_thread(thread_id)
+    return JSONResponse(data, status_code=200 if data["messages"] else 404)
 
 
 async def deliveries_list(request: Request) -> Response:
@@ -570,6 +579,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/diag/client", diag_client, methods=["POST"]),
             Route("/api/diag/export", diag_export),
             Route("/api/scheduled", scheduled_list),
+            Route("/api/email/{thread_id}", email_thread),
             Route("/api/deliveries", deliveries_list),
             Route("/api/deliveries", deliveries_add, methods=["POST"]),
             Route("/api/deliveries/{id:int}/check", delivery_check, methods=["POST"]),

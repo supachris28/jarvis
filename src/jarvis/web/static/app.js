@@ -117,6 +117,7 @@ function route() {
   if (view === "changes") loadChanges();
   if (view === "plan") loadPlan();
   if (view === "logs") loadLogs();
+  if (view === "email") loadEmail(new URLSearchParams(location.hash.split("?")[1] || "").get("thread"));
   if (view === "chat") {
     $("#prompt").focus();
     if (chatNeedsScroll) requestAnimationFrame(scrollChatToBottom);  // messages added while this tab was hidden
@@ -431,7 +432,7 @@ function proposalCard(p) {
   el.className = "proposal card";
   el.dataset.id = p.id;
   const source = p.email_subject
-    ? `From email: ${p.gmail_url ? `<a href="${esc(p.gmail_url)}" target="_blank" rel="noopener">${esc(p.email_subject)}</a>` : esc(p.email_subject)}`
+    ? `From email: ${p.email_url ? `<a href="${esc(p.email_url)}">${esc(p.email_subject)}</a>` : esc(p.email_subject)}`
     : "From chat";
   const how = { ics: "calendar invite", jsonld: "booking details", llm: `read by AI · ${Math.round(p.confidence * 100)}% sure`, chat: "your message" }[p.source] || p.source;
   const endShown = p.all_day ? addDays(p.end.slice(0, 10), -1) : p.end.slice(0, 16);
@@ -573,6 +574,26 @@ async function loadEvents() {
   if (!data.items.length && !$("#action-proposals").childElementCount) list.innerHTML = '<p class="muted">Nothing waiting. Events found in your email and home actions you ask for appear here.</p>';
   await loadMuted();
 }
+/* ---------- reading an email inside Jarvis (Gmail web links can't open one email on Android) ---------- */
+async function loadEmail(threadId) {
+  $("#email-subject").textContent = "Loading…";
+  $("#email-messages").innerHTML = "";
+  if (!threadId) return;
+  const response = await api(`/api/email/${encodeURIComponent(threadId)}`);
+  const data = await response.json();
+  if (!response.ok) { $("#email-subject").textContent = data.error || "Couldn't load that email."; return; }
+  $("#email-subject").textContent = data.subject || "(no subject)";
+  $("#email-gmail").href = data.gmail_url;
+  $("#email-messages").innerHTML = data.messages.map((m) => `
+    <div class="card email-message">
+      <div><strong>${esc(m.from)}</strong></div>
+      <div class="muted small">${esc(m.when)}${m.to ? " · to " + esc(m.to) : ""}</div>
+      <div class="email-body">${esc(m.body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')}</div>
+      ${m.attachments && m.attachments.length ? `<div class="muted small">📎 ${m.attachments.map(esc).join(", ")}</div>` : ""}
+    </div>`).join("");
+}
+$("#email-back").addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else location.hash = "#chat"; });
+
 /* ---------- deliveries ---------- */
 function deliveryCard(d) {
   const el = document.createElement("div");
@@ -590,6 +611,7 @@ function deliveryCard(d) {
     ${steps ? `<details><summary class="small">History</summary><ul class="small">${steps}</ul></details>` : ""}
     <div class="p-actions">
       ${d.tracking_url ? `<a class="button ghost" href="${esc(d.tracking_url)}" target="_blank" rel="noopener">Tracking page</a>` : ""}
+      ${d.thread_id ? `<a class="button ghost" href="#email?thread=${esc(d.thread_id)}">Email</a>` : ""}
       ${d.tracking_url && d.status !== "delivered" ? '<button class="ghost" data-dact="check">Check now</button>' : ""}
       <button class="ghost" data-dact="archive">${d.status === "delivered" ? "Done" : "Stop tracking"}</button>
     </div><div class="p-status small"></div>`;
@@ -640,7 +662,7 @@ function renderHistory(items) {
   box.innerHTML = shown.map((h) => `
     <div class="row history-item">
       <div><span class="muted small">${esc(h.at)}</span>
-        <div>${h.icon} ${h.url ? `<a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.text)}</a>` : esc(h.text)}</div>
+        <div>${h.icon} ${h.url ? `<a href="${esc(h.url)}"${/^\/?#/.test(h.url) ? "" : ' target="_blank" rel="noopener"'}>${esc(h.text)}</a>` : esc(h.text)}</div>
         ${h.detail ? `<div class="muted small">${esc(h.detail)}</div>` : ""}</div>
       <span class="tag ${HISTORY_TONE[h.status] || ""}">${esc(h.status)}</span>
     </div>`).join("") || '<p class="muted">Nothing yet. Reminders, home actions and calendar additions show up here.</p>';

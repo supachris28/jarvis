@@ -166,3 +166,5 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .msg .body pre code { background: none; padding: 0; }
 .msg .body ol, .msg .body ul { padding-left: 1.3rem; margin: .3rem 0; }
 .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4 { font-size: 1em; margin: .6rem 0 .3rem; }
+.email-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: .5rem; font-size: .95em; }
+.email-message { margin-bottom: .5rem; }

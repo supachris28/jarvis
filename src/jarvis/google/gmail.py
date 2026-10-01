@@ -237,14 +237,19 @@ class Gmail:
 
 
 def thread_url(thread_id: str, account: str = "") -> str:
-    """Link that opens a thread in Gmail on the right Google account.
+    """Link that opens a thread in Gmail on the web, on the right Google account.
 
-    /mail/u/0/ means "whichever account you signed into first in this browser", so with more than one Google
-    account (or on a phone) it often opened the wrong mailbox and showed "conversation not found". authuser= picks
-    the account by address instead."""
+    /mail/u/<address>/ picks the account by address. (/mail/u/0/ means "whichever account you signed into first", and
+    the ?authuser= form gets redirected in a way that drops the #thread part, landing on the inbox.)"""
     if not thread_id:
         return ""
     from urllib.parse import quote
-    who = f"?authuser={quote(account, safe='@')}" if account else "u/0/"
-    return f"https://mail.google.com/mail/{who}#all/{thread_id}"
+    return f"https://mail.google.com/mail/u/{quote(account, safe='@') if account else '0'}/#all/{thread_id}"
 
+
+def app_email_url(thread_id: str, public_url: str = "") -> str:
+    """Link to the email inside Jarvis — works on every device, including the Android app, where Gmail web links
+    can't open a particular email."""
+    if not thread_id:
+        return ""
+    return f"{public_url.rstrip('/')}/#email?thread={thread_id}"

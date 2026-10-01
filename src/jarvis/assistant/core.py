@@ -21,7 +21,7 @@ from .. import diag
 from ..config import Settings
 from ..db import Database
 from ..google.calendar import Calendar
-from ..google.gmail import Gmail, thread_url
+from ..google.gmail import Gmail, app_email_url
 from ..google.oauth import GoogleError
 from ..llm import LLMError, Ollama
 from ..mcp import MCPClient, MCPError, result_text
@@ -955,7 +955,7 @@ class Assistant:
         if plan.route == "gmail":
             threads = await self.gmail.search_threads(plan.query, 12)
             sources = [{"label": f"{t['from']} — {t['subject']}",
-                        "url": thread_url(t["id"], self.db.get("gmail.me", ""))} for t in threads]
+                        "url": app_email_url(t["id"])} for t in threads]
             return json.dumps(threads, ensure_ascii=False, indent=1), sources
         if plan.route == "calendar":
             return await self.gather_calendar(plan.query)

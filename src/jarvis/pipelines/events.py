@@ -25,7 +25,7 @@ from ..extract.events import (EXTRACT_PROMPT, EventCandidate, parse_ics, parse_i
                               is_not_event, title_tokens, validate_llm_events, worth_llm_scan)
 from ..extract.event_text import _find_date, calendar_name, parse_event_request
 from ..google.calendar import Calendar
-from ..google.gmail import Gmail, ParsedMessage, thread_url
+from ..google.gmail import Gmail, ParsedMessage, app_email_url, thread_url
 from ..google.oauth import GoogleError
 from ..llm import LLMError, Ollama
 from ..notify import Notifier
@@ -283,6 +283,7 @@ class EventFinder:
         item["all_day"] = bool(item["all_day"])
         item["when"] = describe_when(item["start"], item["end"], item["all_day"], self.settings.tz)
         item["gmail_url"] = thread_url(item["thread_id"], self.db.get("gmail.me", ""))
+        item["email_url"] = app_email_url(item["thread_id"])
         thread = self.db.one("SELECT path FROM threads WHERE thread_id = ?", (item["thread_id"],)) \
             if item["thread_id"] else None
         item["note_path"] = thread["path"] if thread else ""
@@ -335,7 +336,8 @@ class EventFinder:
         body = {"summary": str(data["title"])[:250], "location": str(data.get("location") or "")[:500], **timing}
         if row["thread_id"]:
             gmail_url = thread_url(row["thread_id"], self.db.get("gmail.me", ""))
-            description += f"\n\nAdded by Jarvis from the email “{row['email_subject']}”: {gmail_url}"
+            description += (f"\n\nAdded by Jarvis from the email “{row['email_subject']}”: {gmail_url}"
+                            f"\nOpen it in Jarvis: {app_email_url(row['thread_id'], self.settings.public_url)}")
             body["source"] = {"title": "Email", "url": gmail_url}
         else:
             description += "\n\nAdded by Jarvis."

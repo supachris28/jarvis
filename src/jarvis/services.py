@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 import re
@@ -320,6 +321,29 @@ class Services:
         job.trigger.set()
         return True
 
+    async def email_thread(self, thread_id: str) -> dict:
+        """An email conversation to read inside Jarvis: fetched from Gmail (full text), or the copy Jarvis stored."""
+        from .google.gmail import parse_message, thread_url
+        messages = []
+        try:
+            for raw in await self.gmail.thread_messages(thread_id):
+                m = parse_message(raw, 30000)
+                messages.append({"from": f"{m.from_name} <{m.from_addr}>" if m.from_name else m.from_addr,
+                                 "to": ", ".join(name or addr for addr, name in m.to), "ts": m.ts,
+                                 "subject": m.subject, "body": m.body, "attachments": m.attachments})
+        except Exception as error:  # noqa: BLE001 — Google offline: show what Jarvis stored
+            diag.debug("gmail", f"couldn't fetch thread {thread_id}: {type(error).__name__}")
+        if not messages:
+            for row in self.db.all("SELECT * FROM emails WHERE thread_id = ? ORDER BY ts", (thread_id,)):
+                messages.append({"from": f"{row['from_name']} <{row['from_addr']}>" if row["from_name"] else row["from_addr"],
+                                 "to": "", "ts": row["ts"], "subject": row["subject"], "body": row["body"],
+                                 "attachments": json.loads(row["attachments"] or "[]")})
+        tz = self.settings.tz
+        for message in messages:
+            message["when"] = datetime.fromtimestamp(message["ts"], tz).strftime("%a %d %b %Y, %H:%M")
+        return {"thread_id": thread_id, "subject": messages[0]["subject"] if messages else "",
+                "messages": messages, "gmail_url": thread_url(thread_id, self.db.get("gmail.me", ""))}
+
     def history(self, limit: int = 40) -> list[dict]:
         """Everything Jarvis did or you decided, newest first, in one list: reminders, home actions (including each
         repeating one's latest run) and calendar suggestions added or dismissed."""
@@ -346,7 +370,7 @@ class Services:
             items.append({"ts": r["decided"], "icon": "📝" if r["kind"] == "note" else "📅",
                           "text": r["title"] + (f" — {r['notes']}" if r["kind"] == "note" else ""), "status": status,
                           "detail": when + (f" · {r['error']}" if r["status"] == "failed" and r["error"] else ""),
-                          "kind": "calendar", "url": self.events.present(r)["gmail_url"]})
+                          "kind": "calendar", "url": self.events.present(r)["email_url"]})
         items.sort(key=lambda i: i["ts"] or 0, reverse=True)
         for item in items:
             item["at"] = datetime.fromtimestamp(item["ts"], tz).strftime("%a %d %b, %H:%M") if item["ts"] else ""
