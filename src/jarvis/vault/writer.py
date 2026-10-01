@@ -85,6 +85,8 @@ class VaultWriter:
     async def apply(self, spec: NoteSpec, actor: str) -> dict | None:
         """Write the note if it changed. Returns a saved-item record, or None if nothing changed."""
         existing = await self.vault.get_text(spec.path)
+        if existing is not None:
+            existing = existing.replace("\r\n", "\n")  # a CRLF note would otherwise never compare "unchanged"
         frontmatter, body = split_frontmatter(existing or "")
         if existing is None:
             body = f"# {spec.title}\n" + (f"\n{spec.intro.strip()}\n" if spec.intro.strip() else "")
