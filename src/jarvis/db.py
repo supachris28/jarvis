@@ -259,6 +259,8 @@ class Database:
         self._lock = threading.RLock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # WAL + NORMAL: safe if Jarvis crashes; a power cut can lose only the last moments of writes
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
             self._conn.execute("INSERT OR IGNORE INTO auth (id) VALUES (1)")

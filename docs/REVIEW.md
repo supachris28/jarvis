@@ -151,7 +151,7 @@ The image is already small and well locked down (slim base, deps layer before `C
 | `match_people` | Done (v0.9.5): one compiled pattern per people list (cached). |
 | `refresh_people`, `notes_where` | Done (v0.9.5): index queries / `json_extract`. |
 | `fetch_page` bytearray | Done (v0.9.5). |
-| `PRAGMA synchronous=NORMAL` | Open — a durability decision for Chris. |
+| `PRAGMA synchronous=NORMAL` | Done (v0.9.6), agreed by Chris. |
 | Faster test suite | Not done. |
 | Notification retry after a failed send | Done (v0.9.5). |
 | Brief skipped if Jarvis was down in the morning | Left as is (product decision). |
