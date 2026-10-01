@@ -12,6 +12,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .. import http
+
 from .client import VaultError, VaultUnavailable
 
 
@@ -37,11 +39,11 @@ class NextcloudWriter:
             raise VaultUnavailable(f"Nextcloud is not reachable ({type(error).__name__}).") from None
 
     async def health(self) -> dict:
-        async with httpx.AsyncClient(timeout=10, verify=self.verify) as client:
-            try:
-                response = await self._request(client, "PROPFIND", "", headers={"Depth": "0"})
-            except VaultUnavailable as error:
-                return {"ok": False, "detail": str(error)}
+        client = http.shared(timeout=10, verify=self.verify)
+        try:
+            response = await self._request(client, "PROPFIND", "", headers={"Depth": "0"})
+        except VaultUnavailable as error:
+            return {"ok": False, "detail": str(error)}
         if response.status_code == 401:
             return {"ok": False, "detail": "Nextcloud rejected the app password (NEXTCLOUD_APP_PASSWORD)"}
         if response.status_code == 404:
@@ -64,23 +66,23 @@ class NextcloudWriter:
     async def put(self, path: str, text: str) -> None:
         body = text.encode("utf-8")
         headers = {"Content-Type": "text/markdown; charset=utf-8"}
-        async with httpx.AsyncClient(timeout=30, verify=self.verify) as client:
-            for attempt in range(3):
-                response = await self._request(client, "PUT", path, content=body, headers=headers)
-                if response.status_code in (200, 201, 204):
-                    return
-                if response.status_code in (404, 409) and attempt == 0:
-                    # parent folder missing — Nextcloud answers 404 ("could not be located"), plain Sabre 409
-                    await self._mkdirs(client, path)
-                    continue
-                if response.status_code == 404:
-                    raise VaultError(f"Nextcloud says the folder for {path} doesn't exist even after creating it — "
-                                     f"check NEXTCLOUD_USER (the user ID, case-sensitive) and NEXTCLOUD_VAULT_DIR.")
-                if response.status_code == 423 and attempt < 2:  # file locked by a sync client
-                    await asyncio.sleep(1.5)
-                    continue
-                if response.status_code == 401:
-                    raise VaultError("Nextcloud rejected the app password (NEXTCLOUD_APP_PASSWORD).")
-                hint = " — check NEXTCLOUD_USER (the user ID, case-sensitive)" if response.status_code == 403 else ""
-                raise VaultError(f"Nextcloud refused to save {path} (HTTP {response.status_code}){hint}.")
+        client = http.shared(timeout=30, verify=self.verify)
+        for attempt in range(3):
+            response = await self._request(client, "PUT", path, content=body, headers=headers)
+            if response.status_code in (200, 201, 204):
+                return
+            if response.status_code in (404, 409) and attempt == 0:
+                # parent folder missing — Nextcloud answers 404 ("could not be located"), plain Sabre 409
+                await self._mkdirs(client, path)
+                continue
+            if response.status_code == 404:
+                raise VaultError(f"Nextcloud says the folder for {path} doesn't exist even after creating it — "
+                                 f"check NEXTCLOUD_USER (the user ID, case-sensitive) and NEXTCLOUD_VAULT_DIR.")
+            if response.status_code == 423 and attempt < 2:  # file locked by a sync client
+                await asyncio.sleep(1.5)
+                continue
+            if response.status_code == 401:
+                raise VaultError("Nextcloud rejected the app password (NEXTCLOUD_APP_PASSWORD).")
+            hint = " — check NEXTCLOUD_USER (the user ID, case-sensitive)" if response.status_code == 403 else ""
+            raise VaultError(f"Nextcloud refused to save {path} (HTTP {response.status_code}){hint}.")
         raise VaultError(f"Nextcloud could not save {path}.")

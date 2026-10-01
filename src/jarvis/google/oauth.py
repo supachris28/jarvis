@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from .. import http
+
 from .. import diag
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -140,9 +142,9 @@ class GoogleOAuth:
 
     async def _token_request(self, payload: dict) -> dict:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(TOKEN_URL, data=payload)
-                data = response.json()
+            client = http.shared(timeout=30)
+            response = await client.post(TOKEN_URL, data=payload)
+            data = response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise GoogleError(f"Could not reach Google OAuth: {type(error).__name__}") from None
         if response.status_code >= 400 or "error" in data:
@@ -189,14 +191,18 @@ class GoogleOAuth:
                       json_body: dict | None = None) -> dict:
         token = await self.access_token()
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.request(method, url, params=params, json=json_body,
-                                                headers={"Authorization": f"Bearer {token}"})
+            client = http.shared(timeout=60)
+            response = await client.request(method, url, params=params, json=json_body,
+                                            headers={"Authorization": f"Bearer {token}"})
         except httpx.HTTPError as error:
             raise GoogleError(f"Could not reach Google: {type(error).__name__}") from None
         if response.status_code == 401:
-            self._token = None
-            raise GoogleAuthRequired("Google rejected the token; reconnect Google.")
+            # force a refresh next time instead of re-reading the same cached access token from disk
+            token_data = self._load() or {}
+            if token_data.get("access_token"):
+                token_data.pop("access_token", None)
+                self._save(token_data)
+            raise GoogleAuthRequired("Google rejected the token; it will be refreshed on the next call.")
         if response.status_code >= 400:
             try:
                 message = response.json().get("error", {}).get("message", "")

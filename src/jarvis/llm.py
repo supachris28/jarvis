@@ -9,6 +9,8 @@ from typing import AsyncIterator
 
 import httpx
 
+from . import http
+
 from . import diag
 
 
@@ -31,11 +33,11 @@ class Ollama:
     async def loaded(self) -> dict[str, str] | None:
         """Models currently in GPU memory → when Ollama will unload them ('' = never). None if unreachable."""
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
-                response = await client.get(f"{self.base_url}/api/ps")
-                response.raise_for_status()
-                return {m.get("name", ""): m.get("expires_at", "") for m in response.json().get("models", []) or []
-                        if isinstance(m, dict)}
+            client = http.shared(timeout=4)
+            response = await client.get(f"{self.base_url}/api/ps")
+            response.raise_for_status()
+            return {m.get("name", ""): m.get("expires_at", "") for m in response.json().get("models", []) or []
+                    if isinstance(m, dict)}
         except (httpx.HTTPError, ValueError):
             return None
 
@@ -57,10 +59,10 @@ class Ollama:
         for model in missing:
             started = time.perf_counter()
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.post(f"{self.base_url}/api/generate",
-                                                 json={"model": model, "keep_alive": self.keep_alive})
-                    response.raise_for_status()
+                client = http.shared(timeout=self.timeout)
+                response = await client.post(f"{self.base_url}/api/generate",
+                                             json={"model": model, "keep_alive": self.keep_alive})
+                response.raise_for_status()
             except httpx.HTTPError as error:
                 diag.warning("model", f"couldn't load {model}: {type(error).__name__}", error=str(error))
                 return f"couldn't load {model}"
@@ -70,10 +72,10 @@ class Ollama:
 
     async def health(self) -> dict:
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                response.raise_for_status()
-                models = [m.get("name") for m in response.json().get("models", []) if isinstance(m, dict)]
+            client = http.shared(timeout=4)
+            response = await client.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            models = [m.get("name") for m in response.json().get("models", []) if isinstance(m, dict)]
         except (httpx.HTTPError, ValueError) as error:
             return {"ok": False, "detail": f"unreachable ({type(error).__name__})"}
         missing = [m for m in {self.chat_model, self.router_model} if m not in models]
@@ -107,11 +109,11 @@ class Ollama:
             payload["format"] = "json"
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(f"{self.base_url}/api/chat", json=payload)
-                response.raise_for_status()
-                data = response.json()
-                content = data.get("message", {}).get("content", "")
+            client = http.shared(timeout=self.timeout)
+            response = await client.post(f"{self.base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            content = data.get("message", {}).get("content", "")
         except httpx.HTTPError as error:
             diag.warning("model", f"{model} call failed: {type(error).__name__}", error=str(error),
                          **self._describe(messages))
@@ -135,28 +137,28 @@ class Ollama:
         first: int | None = None
         output = ""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except ValueError:
-                            continue
-                        text = chunk.get("message", {}).get("content", "")
-                        if text:
-                            if first is None:
-                                first = round((time.perf_counter() - started) * 1000)
-                            output += text
-                            yield text
-                        if chunk.get("done"):
-                            diag.event("model", f"{payload['model']} streamed answer: {len(output)} chars, first token "
-                                       f"after {first} ms", first_token_ms=first,
-                                       output=output[:4000] if diag.verbose() else None,
-                                       **self._stats(chunk), **self._describe(messages))
-                            break
+            client = http.shared(timeout=self.timeout)
+            async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except ValueError:
+                        continue
+                    text = chunk.get("message", {}).get("content", "")
+                    if text:
+                        if first is None:
+                            first = round((time.perf_counter() - started) * 1000)
+                        output += text
+                        yield text
+                    if chunk.get("done"):
+                        diag.event("model", f"{payload['model']} streamed answer: {len(output)} chars, first token "
+                                   f"after {first} ms", first_token_ms=first,
+                                   output=output[:4000] if diag.verbose() else None,
+                                   **self._stats(chunk), **self._describe(messages))
+                        break
         except httpx.HTTPError as error:
             diag.warning("model", f"{payload['model']} stream failed: {type(error).__name__}", error=str(error),
                          received_chars=len(output))

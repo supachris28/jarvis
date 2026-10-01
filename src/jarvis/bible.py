@@ -11,6 +11,8 @@ from urllib.parse import quote
 
 import httpx
 
+from . import http
+
 from . import diag
 
 BOOKS = {
@@ -78,13 +80,13 @@ async def passage(reference: str, translation: str = "webbe") -> dict:
     """Fetch the passage text. Raises BibleError with a readable message."""
     url = f"{API}/{quote(reference)}?translation={quote(translation)}"
     try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.get(url)
-            if response.status_code == 404 and translation != "web":
-                diag.debug("bible", f"translation {translation} not available — using WEB")
-                return await passage(reference, "web")
-            response.raise_for_status()
-            data = response.json()
+        client = http.shared(timeout=12)
+        response = await client.get(url)
+        if response.status_code == 404 and translation != "web":
+            diag.debug("bible", f"translation {translation} not available — using WEB")
+            return await passage(reference, "web")
+        response.raise_for_status()
+        data = response.json()
     except (httpx.HTTPError, ValueError) as error:
         raise BibleError(f"I couldn't fetch {reference.title()} ({type(error).__name__}).") from None
     verses = data.get("verses") or []

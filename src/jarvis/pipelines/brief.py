@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
+from .. import http
+
 from .. import diag
 from ..config import Settings
 from ..db import Database
@@ -57,9 +59,9 @@ class Brief:
                   "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
                   "timezone": self.settings.timezone, "forecast_days": 1}
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
-                daily = response.json()["daily"]
+            client = http.shared(timeout=10)
+            response = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
+            daily = response.json()["daily"]
         except (httpx.HTTPError, ValueError, KeyError) as error:
             diag.warning("brief", f"weather unavailable: {type(error).__name__}")
             return None

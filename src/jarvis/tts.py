@@ -12,6 +12,8 @@ import re
 
 import httpx
 
+from . import http
+
 from .config import Settings
 
 MAX_CHARS = 1500
@@ -62,22 +64,22 @@ class Speech:
             raise SpeechError("Nothing to say.")
         provider = self.provider
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                if provider == "kokoro":
-                    response = await client.post(
-                        self.settings.tts_url.rstrip("/") + "/v1/audio/speech",
-                        json={"model": "kokoro", "input": spoken, "voice": self.settings.tts_voice,
-                              "response_format": "mp3", "speed": self.settings.tts_speed},
-                    )
-                elif provider == "elevenlabs":
-                    response = await client.post(
-                        f"https://api.elevenlabs.io/v1/text-to-speech/{self.settings.elevenlabs_voice_id}",
-                        params={"output_format": "mp3_44100_128"},
-                        headers={"xi-api-key": self.settings.elevenlabs_api_key, "Accept": "audio/mpeg"},
-                        json={"text": spoken, "model_id": self.settings.elevenlabs_model_id},
-                    )
-                else:
-                    raise SpeechError("Server speech is not configured; the browser voice is used instead.")
+            client = http.shared(timeout=60)
+            if provider == "kokoro":
+                response = await client.post(
+                    self.settings.tts_url.rstrip("/") + "/v1/audio/speech",
+                    json={"model": "kokoro", "input": spoken, "voice": self.settings.tts_voice,
+                          "response_format": "mp3", "speed": self.settings.tts_speed},
+                )
+            elif provider == "elevenlabs":
+                response = await client.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{self.settings.elevenlabs_voice_id}",
+                    params={"output_format": "mp3_44100_128"},
+                    headers={"xi-api-key": self.settings.elevenlabs_api_key, "Accept": "audio/mpeg"},
+                    json={"text": spoken, "model_id": self.settings.elevenlabs_model_id},
+                )
+            else:
+                raise SpeechError("Server speech is not configured; the browser voice is used instead.")
         except httpx.HTTPError as error:
             raise SpeechError(f"Speech service unreachable ({type(error).__name__}).") from None
         if response.status_code >= 400:

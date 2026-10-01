@@ -16,7 +16,7 @@ from starlette.responses import HTMLResponse, FileResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from .. import __version__, diag
+from .. import __version__, diag, http
 from ..auth import Auth
 from ..config import Settings
 from ..google.oauth import GoogleError
@@ -494,6 +494,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             services.start()
         yield
         await services.stop()
+        await http.aclose_all()
 
     app = Starlette(
         routes=[

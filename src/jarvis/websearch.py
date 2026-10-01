@@ -25,6 +25,8 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from . import http
+
 from . import diag
 from .config import Settings
 from .db import Database
@@ -172,8 +174,8 @@ class WebSearch:
         if self.provider == "brave":
             return {"ok": True, "detail": "Brave Search API"}
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(self.settings.searxng_url.rstrip("/") + "/healthz")
+            client = http.shared(timeout=5)
+            response = await client.get(self.settings.searxng_url.rstrip("/") + "/healthz")
             ok = response.status_code < 400
         except httpx.HTTPError as error:
             return {"ok": False, "detail": f"SearXNG unreachable ({type(error).__name__})"}
@@ -206,8 +208,8 @@ class WebSearch:
     async def _searxng(self, query: str, count: int) -> list[Result]:
         params = {"q": query, "format": "json", "language": self.settings.web_language, "safesearch": 1}
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(self.settings.searxng_url.rstrip("/") + "/search", params=params)
+            client = http.shared(timeout=15)
+            response = await client.get(self.settings.searxng_url.rstrip("/") + "/search", params=params)
         except httpx.HTTPError as error:
             raise WebError(f"SearXNG is not reachable ({type(error).__name__}).") from None
         if response.status_code == 403:
@@ -230,11 +232,11 @@ class WebSearch:
 
     async def _brave(self, query: str, count: int) -> list[Result]:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(
-                    "https://api.search.brave.com/res/v1/web/search",
-                    params={"q": query, "count": count, "search_lang": self.settings.web_language.split("-")[0]},
-                    headers={"X-Subscription-Token": self.settings.brave_api_key, "Accept": "application/json"})
+            client = http.shared(timeout=15)
+            response = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": count, "search_lang": self.settings.web_language.split("-")[0]},
+                headers={"X-Subscription-Token": self.settings.brave_api_key, "Accept": "application/json"})
         except httpx.HTTPError as error:
             raise WebError(f"Brave Search is not reachable ({type(error).__name__}).") from None
         if response.status_code >= 400:

@@ -7,6 +7,8 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from . import http
+
 PROTOCOL_VERSION = "2025-06-18"
 
 
@@ -39,8 +41,8 @@ class MCPClient:
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.endpoint, json=body, headers=headers)
+            client = http.shared(timeout=self.timeout)
+            response = await client.post(self.endpoint, json=body, headers=headers)
         except httpx.HTTPError as error:
             raise MCPError(f"Could not reach {self.name}: {type(error).__name__}") from None
         if response.status_code >= 400:

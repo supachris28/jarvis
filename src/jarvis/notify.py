@@ -9,6 +9,8 @@ from datetime import datetime, time as dtime
 
 import httpx
 
+from . import http
+
 from . import diag
 
 from .config import Settings
@@ -121,10 +123,10 @@ class Notifier:
             body["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         auth = {"Authorization": f"Bearer {self.settings.ntfy_token}"} if self.settings.ntfy_token else {}
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                # JSON publishing handles UTF-8 titles safely.
-                response = await client.post(self.settings.ntfy_url.rstrip("/"), json=body, headers=auth)
-                response.raise_for_status()
+            client = http.shared(timeout=15)
+            # JSON publishing handles UTF-8 titles safely.
+            response = await client.post(self.settings.ntfy_url.rstrip("/"), json=body, headers=auth)
+            response.raise_for_status()
         except httpx.HTTPError as error:
             self.db.execute("UPDATE notifications SET status = 'failed', error = ? WHERE id = ?",
                             (f"{type(error).__name__}: {error}"[:300], note_id))

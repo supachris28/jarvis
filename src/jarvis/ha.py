@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from . import http
+
 STOP = {"the", "a", "an", "my", "our", "in", "on", "of", "please", "all", "to", "and"}
 # words in questions that also appear in entity names but say nothing about which device is meant
 QUESTION_WORDS = {"what", "whats", "is", "are", "how", "home", "house", "at", "me", "tell", "current", "currently",
@@ -178,9 +180,9 @@ class HomeAssistant:
         if not self.configured:
             raise HAError("Home Assistant is not configured (HA_URL / HA_TOKEN).")
         try:
-            async with httpx.AsyncClient(timeout=20, verify=self.verify) as client:
-                response = await client.request(method, self.url + path, json=body,
-                                                headers={"Authorization": f"Bearer {self.token}"})
+            client = http.shared(timeout=20, verify=self.verify)
+            response = await client.request(method, self.url + path, json=body,
+                                            headers={"Authorization": f"Bearer {self.token}"})
         except httpx.HTTPError as error:
             raise HAError(f"Home Assistant is not reachable ({type(error).__name__}).") from None
         if response.status_code == 401:

@@ -13,6 +13,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .. import http
+
 from .. import diag
 
 NOTE_JSON = "application/vnd.olrapi.note+json"
@@ -69,9 +71,9 @@ class ObsidianVault:
         all_headers = {"Authorization": f"Bearer {self.api_key}"}
         all_headers.update(headers or {})
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify) as client:
-                response = await client.request(method, self.base_url + path, headers=all_headers,
-                                                content=content, params=params)
+            client = http.shared(timeout=self.timeout, verify=self.verify)
+            response = await client.request(method, self.base_url + path, headers=all_headers,
+                                            content=content, params=params)
         except httpx.TransportError as error:
             raise VaultUnavailable(f"Obsidian is not reachable ({type(error).__name__}).") from None
         if response.status_code in (401, 403):
