@@ -511,7 +511,8 @@ async def run_job(request: Request) -> Response:
 
 async def notifications(request: Request) -> Response:
     rows = request.app.state.services.db.all(
-        "SELECT id, ts, title, message, priority, url, status, error FROM notifications ORDER BY id DESC LIMIT 100")
+        "SELECT id, ts, title, message, priority, url, status, error FROM notifications WHERE status != 'off' "
+        "ORDER BY id DESC LIMIT 100")
     return JSONResponse([dict(r) for r in rows])
 
 

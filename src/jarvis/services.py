@@ -185,11 +185,15 @@ class Services:
         return self.diag.prune()
 
     async def post_brief(self, text: str) -> None:
+        if not self.notifier.in_chat("brief"):
+            return
         self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
                         (time.time(), text, diag.current_trace_id()))
 
     async def announce_saves(self, saved: list[dict]) -> None:
         """Post what was just saved into the chat timeline (the ntfy summary is sent by the `saves` job)."""
+        if not self.notifier.in_chat("saves"):
+            return
         header = f"**Saved to your vault** ({len(saved)} note{'s' if len(saved) != 1 else ''})"
         self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
                         (time.time(), header + "\n" + format_saves(saved), diag.current_trace_id()))

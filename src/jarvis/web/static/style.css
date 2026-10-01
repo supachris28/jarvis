@@ -170,3 +170,4 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .email-message { margin-bottom: .5rem; }
 .cal-pick { display: inline-flex; align-items: center; gap: .3rem; margin-right: .4rem; }
 .cal-pick select { width: auto; max-width: 11rem; padding: .3rem .4rem; }
+.notify-pref .pref-options { display: flex; flex-direction: column; gap: .2rem; flex: none; }

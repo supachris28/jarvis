@@ -34,16 +34,18 @@ def in_quiet_hours(now: datetime, spec: str) -> bool:
 
 # Each notification has a category you can switch off, or let through quiet hours, in Alerts → Settings.
 CATEGORIES = {
-    "brief":     {"label": "Morning brief",                   "on": True,  "quiet": False},
-    "reminders": {"label": "Your reminders",                  "on": True,  "quiet": False},
-    "calendar":  {"label": "Upcoming calendar events",        "on": True,  "quiet": True},
-    "events":    {"label": "Events found in email",           "on": True,  "quiet": True},
-    "email":     {"label": "Important email",                 "on": True,  "quiet": True},
-    "home":      {"label": "Home actions",                    "on": True,  "quiet": True},
-    "saves":     {"label": "Notes saved to your vault",       "on": False, "quiet": True},
-    "deliveries": {"label": "Delivery updates",               "on": True,  "quiet": True},
-    "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True},
+    "brief":     {"label": "Morning brief",                   "on": True,  "quiet": False, "chat": True},
+    "reminders": {"label": "Your reminders",                  "on": True,  "quiet": False, "chat": False},
+    "calendar":  {"label": "Upcoming calendar events",        "on": True,  "quiet": True,  "chat": False},
+    "events":    {"label": "Events found in email",           "on": True,  "quiet": True,  "chat": False},
+    "email":     {"label": "Important email",                 "on": True,  "quiet": True,  "chat": False},
+    "home":      {"label": "Home actions",                    "on": True,  "quiet": True,  "chat": False},
+    "saves":     {"label": "Notes saved to your vault",       "on": False, "quiet": True,  "chat": True},
+    "deliveries": {"label": "Delivery updates",               "on": True,  "quiet": True,  "chat": False},
+    "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True, "chat": False},
 }
+# "chat": also post it in the chat timeline. The brief and vault save reports post their own (fuller) messages there.
+CHAT_SELF_POSTED = {"brief", "saves"}
 # "quiet": True = held during quiet hours (and counted in the hourly cap); False = always delivered at once.
 
 
@@ -67,16 +69,21 @@ class Notifier:
         for key, default in CATEGORIES.items():
             mine = saved.get(key) if isinstance(saved.get(key), dict) else {}
             prefs[key] = {"label": default["label"], "on": bool(mine.get("on", default["on"])),
-                          "quiet": bool(mine.get("quiet", default["quiet"]))}
+                          "quiet": bool(mine.get("quiet", default["quiet"])),
+                          "chat": bool(mine.get("chat", default["chat"]))}
         return prefs
 
     def set_preferences(self, changes: dict) -> dict[str, dict]:
         saved = self.db.get("notify.categories") or {}
         for key, value in (changes or {}).items():
             if key in CATEGORIES and isinstance(value, dict):
-                saved[key] = {k: bool(value[k]) for k in ("on", "quiet") if k in value}
+                saved[key] = {**(saved.get(key) if isinstance(saved.get(key), dict) else {}),
+                              **{k: bool(value[k]) for k in ("on", "quiet", "chat") if k in value}}
         self.db.set("notify.categories", saved)
         return self.preferences()
+
+    def in_chat(self, category: str) -> bool:
+        return self.preferences().get(category, {"chat": False})["chat"]
 
     def enabled(self, category: str) -> bool:
         return self.preferences().get(category, {"on": True})["on"]
@@ -84,8 +91,10 @@ class Notifier:
     async def notify(self, title: str, message: str, priority: int = 3, url: str = "", dedupe: str | None = None,
                      tags: str = "", category: str = "system") -> str:
         """Queue and (if allowed now) send. Returns the resulting status."""
-        pref = self.preferences().get(category, {"on": True, "quiet": True})
-        if not pref["on"]:
+        pref = self.preferences().get(category, {"on": True, "quiet": True, "chat": False})
+        # the brief and save reports post their own chat messages, so their chat tick doesn't need a row here
+        to_chat = pref["chat"] and category not in CHAT_SELF_POSTED
+        if not pref["on"] and not to_chat:
             diag.debug("notify", f"not sent — “{CATEGORIES.get(category, {}).get('label', category)}” is switched off: "
                                  f"{title}")
             return "off"
@@ -104,6 +113,11 @@ class Notifier:
                             (time.time(), failed["id"]))
             cursor = None
         note_id = cursor.lastrowid if cursor is not None else failed["id"]
+        if to_chat and cursor is not None:
+            self._post_to_chat(title, message, url)
+        if not pref["on"]:  # chat only: kept (status 'off') so the same alert isn't posted twice
+            self.db.execute("UPDATE notifications SET status = 'off' WHERE id = ?", (note_id,))
+            return "off"
         now = datetime.now(self.settings.tz)
         recent = self.db.one("SELECT COUNT(*) AS n FROM notifications WHERE status = 'sent' AND ts > ?",
                              (time.time() - 3600,))["n"]
@@ -117,6 +131,15 @@ class Notifier:
             diag.event("notify", f"held ({reason}): {title}", priority=priority)
             return "held"
         return await self._send(note_id, title, message, priority, url, tags)
+
+    def _post_to_chat(self, title: str, message: str, url: str) -> None:
+        link = ""
+        if url:
+            local = self.settings.public_url.rstrip("/")
+            target = url[len(local):] if local and url.startswith(local + "/") else url
+            link = f"\n[Open]({target})" if target.startswith(("http://", "https://", "/#")) else ""
+        self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
+                        (time.time(), f"🔔 **{title}**\n{message}{link}", diag.current_trace_id()))
 
     async def _send(self, note_id: int, title: str, message: str, priority: int, url: str, tags: str = "") -> str:
         if not self.configured:

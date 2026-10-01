@@ -789,12 +789,16 @@ $("#logout").addEventListener("click", async () => { await api("/api/logout", { 
 /* ---------- notifications & vault ---------- */
 async function loadNotifyPrefs() {
   const data = await (await api("/api/notifications/settings")).json();
-  $("#notify-prefs").innerHTML = `<p class="muted small">Quiet hours: ${esc(data.quiet_hours || "none")}. Held
-    notifications arrive together afterwards.</p>` + Object.entries(data.categories).map(([key, c]) => `
+  $("#notify-prefs").innerHTML = `<p class="muted small">First tick: send it to your phone. “in quiet hours”: don't hold
+    it during quiet hours (${esc(data.quiet_hours || "none")}; held ones arrive together afterwards). “in chat”: also show
+    it in the chat.</p>` + Object.entries(data.categories).map(([key, c]) => `
     <div class="row notify-pref" data-key="${esc(key)}">
       <label class="calendar-row"><span><input type="checkbox" data-field="on" ${c.on ? "checked" : ""}> ${esc(c.label)}</span></label>
-      <label class="small muted"><input type="checkbox" data-field="loud" ${c.quiet ? "" : "checked"} ${c.on ? "" : "disabled"}>
-        send in quiet hours</label>
+      <span class="pref-options">
+        <label class="small muted"><input type="checkbox" data-field="loud" ${c.quiet ? "" : "checked"} ${c.on ? "" : "disabled"}>
+          in quiet hours</label>
+        <label class="small muted"><input type="checkbox" data-field="chat" ${c.chat ? "checked" : ""}> in chat</label>
+      </span>
     </div>`).join("");
 }
 $("#notify-prefs").addEventListener("change", async (event) => {
@@ -803,8 +807,9 @@ $("#notify-prefs").addEventListener("change", async (event) => {
   const on = row.querySelector('[data-field="on"]').checked;
   const loud = row.querySelector('[data-field="loud"]');
   loud.disabled = !on;
+  const chat = row.querySelector('[data-field="chat"]').checked;
   await api("/api/notifications/settings", { method: "POST",
-    body: JSON.stringify({ [row.dataset.key]: { on, quiet: !loud.checked } }) });
+    body: JSON.stringify({ [row.dataset.key]: { on, quiet: !loud.checked, chat } }) });
   $("#notify-saved").textContent = "Saved.";
 });
 $("#notify-settings").addEventListener("toggle", (event) => { if (event.target.open) loadNotifyPrefs(); });

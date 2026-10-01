@@ -242,13 +242,31 @@ class IntegrationTests(IntegrationBase):
         n.set_preferences({"email": {"on": True, "quiet": False}, "brief": {"on": False}})
         self.assertEqual(self.run_async(n.notify("Email from Bob", "…", 3, category="email")), "logged")
         self.assertEqual(self.run_async(n.notify("Good morning 2", "…", 3, category="brief")), "off")
-        self.assertEqual(n.preferences()["email"], {"label": "Important email", "on": True, "quiet": False})
+        self.assertEqual(n.preferences()["email"], {"label": "Important email", "on": True, "quiet": False,
+                                                      "chat": False})
         # a notification that failed to send can be sent again with the same key (not a "duplicate")
         self.services.db.execute("UPDATE notifications SET status = 'failed' WHERE title = 'Email from Bob'")
         self.services.db.execute("UPDATE notifications SET dedupe = 'email:bob' WHERE title = 'Email from Bob'")
         self.assertEqual(self.run_async(n.notify("Email from Bob", "…", 3, dedupe="email:bob", category="email")), "logged")
         self.assertEqual(self.run_async(n.notify("Email from Bob", "…", 3, dedupe="email:bob", category="email")),
                          "duplicate")
+        # "in chat": the alert is also posted to the chat once (not again for a duplicate), even with the phone off
+        bells = "SELECT content FROM chat_messages WHERE role = 'activity' AND content LIKE '🔔%'"
+        self.assertEqual(self.services.db.all(bells), [])
+        n.set_preferences({"deliveries": {"on": False, "chat": True}})
+        self.assertEqual(n.preferences()["deliveries"]["quiet"], True, "other ticks kept")
+        for expected in ("off", "duplicate"):
+            self.assertEqual(self.run_async(n.notify("Parcel delivered", "Boots — delivered 10:02", 3,
+                                                     url=self.settings.public_url + "/#plan", dedupe="d:1",
+                                                     category="deliveries")), expected)
+        posted = [r["content"] for r in self.services.db.all(bells)]
+        self.assertEqual(len(posted), 1)
+        self.assertIn("**Parcel delivered**", posted[0])
+        self.assertIn("[Open](/#plan)", posted[0])
+        # brief and save reports: the chat tick decides whether they're posted at all
+        self.assertTrue(n.in_chat("brief"))
+        n.set_preferences({"brief": {"chat": False}})
+        self.assertFalse(n.in_chat("brief"))
 
     def test_model_is_kept_loaded(self):
         llm = self.services.llm
