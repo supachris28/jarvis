@@ -34,6 +34,11 @@ def reminder_text(prompt: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def repeat_payload(when) -> dict:
+    """Extra state a repeating item needs: monthly ones remember the day of the month they were set for."""
+    return {"day_of_month": when.at.day} if when.repeat == "monthly" and when.at else {}
+
+
 class Scheduler:
     def __init__(self, settings: Settings, db: Database, ha: HomeAssistant, notifier: Notifier,
                  vault: ObsidianVault) -> None:
@@ -57,8 +62,9 @@ class Scheduler:
             return {"error": "no-time", "text": what}
         diag.event("reminders", f"parsed “{text}”", at=when.at.isoformat(), repeat=when.repeat, what=what)
         cursor = self.db.execute(
-            "INSERT INTO scheduled (created, kind, text, due, repeat, status, source) VALUES (?, 'reminder', ?, ?, ?, 'scheduled', ?)",
-            (time.time(), what[:300], when.at.timestamp(), when.repeat, source))
+            "INSERT INTO scheduled (created, kind, text, due, repeat, payload, status, source) "
+            "VALUES (?, 'reminder', ?, ?, ?, ?, 'scheduled', ?)",
+            (time.time(), what[:300], when.at.timestamp(), when.repeat, json.dumps(repeat_payload(when)), source))
         self.db.queue_note("reminders", "all")
         return self.get(cursor.lastrowid)
 
@@ -88,7 +94,7 @@ class Scheduler:
             "INSERT INTO scheduled (created, kind, text, due, repeat, payload, status, source) "
             "VALUES (?, 'ha', ?, ?, ?, ?, 'proposed', 'chat')",
             (time.time(), action.description, when.at.timestamp() if when.at else None, when.repeat,
-             json.dumps(action.payload())))
+             json.dumps(action.payload() | repeat_payload(when))))
         return self.get(cursor.lastrowid)
 
     # ---------------------------------------------------------------- reading
@@ -177,8 +183,9 @@ class Scheduler:
         next_due = None
         if row["repeat"] and row["due"]:
             at = datetime.fromtimestamp(row["due"], self.settings.tz)
+            day_of_month = (json.loads(row["payload"] or "{}")).get("day_of_month")  # set when a monthly item is made
             while at is not None and at.timestamp() <= now_ts:
-                at = next_occurrence(at, row["repeat"])
+                at = next_occurrence(at, row["repeat"], day_of_month)
             next_due = at.timestamp() if at else None
         if next_due:
             self.db.execute("UPDATE scheduled SET due = ?, last_run = ?, result = ? WHERE id = ?",

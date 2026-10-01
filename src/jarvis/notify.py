@@ -158,5 +158,5 @@ class Notifier:
             (time.time(), f"{len(held)} held notification(s)", "\n".join(lines), self.settings.public_url),
         )
         await self._send(cursor.lastrowid, f"{len(held)} held notification(s)", "\n".join(lines), 3,
-                         self.settings.public_url + "/#notifications")
+                         self.settings.public_url.rstrip("/") + "/#notifications")
         return len(held)

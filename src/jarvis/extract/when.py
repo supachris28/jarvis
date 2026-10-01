@@ -179,7 +179,9 @@ def parse_when(text: str, now: datetime) -> When:
     return When(candidate, repeat, rest, explicit)
 
 
-def next_occurrence(previous: datetime, repeat: str) -> datetime | None:
+def next_occurrence(previous: datetime, repeat: str, day_of_month: int | None = None) -> datetime | None:
+    """The run after `previous`. For monthly repeats pass the day the reminder was set for: stepping from the
+    previous run alone turns the 31st into the 28th for good after February (Jan 31 → Feb 28 → Mar 28 …)."""
     if repeat == "daily":
         return previous + timedelta(days=1)
     if repeat == "weekly":
@@ -192,9 +194,9 @@ def next_occurrence(previous: datetime, repeat: str) -> datetime | None:
     if repeat == "monthly":
         month = previous.month % 12 + 1
         year = previous.year + (1 if month == 1 else 0)
-        for day in (previous.day, 30, 29, 28):
+        for day in (day_of_month or previous.day, 30, 29, 28):
             try:
-                return previous.replace(year=year, month=month, day=day)
+                return previous.replace(year=year, month=month, day=min(day, 31))
             except ValueError:
                 continue
     return None

@@ -116,8 +116,11 @@ async def _public_address(host: str, allow_private: bool) -> None:
         raise WebError(f"can't resolve {host}") from error
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
-        if (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
-                or address.is_multicast or address.is_unspecified):
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped  # ::ffff:10.0.0.1 is really 10.0.0.1
+        # is_global covers private, loopback, link-local, reserved, unspecified AND carrier-grade NAT
+        # (100.64.0.0/10 — Tailscale), which is_private does not
+        if not address.is_global or address.is_multicast:
             raise WebError(f"refusing to fetch {host}: it points to a private/local address ({address})")
 
 

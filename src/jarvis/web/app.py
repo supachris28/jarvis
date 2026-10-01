@@ -294,10 +294,10 @@ async def diag_logs(request: Request) -> Response:
     if q.get("q"):
         clauses.append("(message LIKE ? OR data LIKE ? OR error LIKE ?)")
         params += [f"%{q['q']}%"] * 3
-    if q.get("before"):
+    if q.get("before", "").isdigit():
         clauses.append("id < ?")
         params.append(int(q["before"]))
-    limit = min(int(q.get("limit", "200") or 200), 1000)
+    limit = min(int(q["limit"]) if q.get("limit", "").isdigit() else 200, 1000)
     order = "ASC" if q.get("trace") else "DESC"
     rows = services.db.all(f"SELECT * FROM logs WHERE {' AND '.join(clauses)} ORDER BY id {order} LIMIT ?",
                            (*params, limit))
