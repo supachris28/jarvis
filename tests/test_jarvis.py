@@ -217,6 +217,50 @@ class IntegrationTests(IntegrationBase):
         self.assertEqual(self.run_async(s.calendar_pipeline.remind()), 1)
         self.assertEqual(self.run_async(s.calendar_pipeline.remind()), 0)
 
+    def test_whats_on_tomorrow_is_listed_by_script_in_local_time(self):
+        from datetime import datetime as dt, timedelta as td
+        s = self.services
+        tz = self.settings.tz
+        today = dt.now(tz).date()
+        tomorrow, yesterday = today + td(days=1), today - td(days=1)
+
+        def utc(day, hour, minute=0):  # Google can give times in UTC ("Z"), as Chris's calendars do
+            return dt(day.year, day.month, day.day, hour, minute, tzinfo=tz).astimezone(
+                __import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def event(n, summary, start, end, all_day=False, location=""):
+            return {"event_id": f"agenda{n}", "calendar_id": "primary", "summary": summary, "start": start, "end": end,
+                    "all_day": all_day, "location": location, "description": "", "status": "confirmed",
+                    "attendees": [], "updated": "1", "html_link": f"https://calendar.google.com/{n}"}
+        s.calendar_pipeline.calendar = FakeCalendar([
+            event(1, "Prayer meeting", utc(yesterday, 19), utc(yesterday, 21), location="Harborne Academy"),
+            event(2, "Amen Corner", utc(tomorrow, 6), utc(tomorrow, 7), location="Towler's"),
+            event(3, "Happy birthday!", tomorrow.isoformat(), (tomorrow + td(days=1)).isoformat(), all_day=True),
+            event(4, "Musical theatre", utc(tomorrow + td(days=1), 10, 30), utc(tomorrow + td(days=1), 11, 30)),
+        ])
+        self.run_async(s.calendar_pipeline.run())
+        model_calls = len(self.ollama.requests)
+
+        async def ask(text):
+            return [e async for e in s.assistant.handle(text)]
+        events = self.run_async(ask("What is in my calendar tomorrow"))
+        text = "".join(e.get("text", "") for e in events if e["type"] == "token")
+        self.assertEqual(next(e for e in events if e["type"] == "meta")["route"], "calendar")
+        self.assertIn(f"Tomorrow, {tomorrow:%A} {tomorrow.day} {tomorrow:%B}", text)
+        self.assertIn("- 06:00–07:00 Amen Corner — Towler's", text, "local time, not UTC")
+        self.assertIn("- All day: Happy birthday!", text)
+        self.assertLess(text.index("Happy birthday"), text.index("Amen Corner"), "all-day events first")
+        self.assertNotIn("Prayer meeting", text)
+        self.assertNotIn("Musical theatre", text)
+        self.assertEqual(len(self.ollama.requests), model_calls, "answered without the model")
+        # an empty day says so; other calendar questions see local times too
+        empty = today + td(days=20)
+        events = self.run_async(ask(f"Do I have anything on {empty.day}/{empty.month}/{empty.year}?"))
+        self.assertIn("Nothing in your calendar on", "".join(e.get("text", "") for e in events if e["type"] == "token"))
+        context, _ = self.run_async(s.assistant.gather_calendar(""))
+        self.assertIn(f"{tomorrow:%a %d %b %Y} 06:00", context)
+        self.assertIn("times are UK local time", context)
+
     def test_outbox_waits_while_obsidian_offline(self):
         s = self.services
         s.vault.base_url = f"http://127.0.0.1:{free_port()}"  # nothing listening

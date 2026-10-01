@@ -13,7 +13,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import AsyncIterator
 from urllib.parse import quote
 
@@ -38,6 +38,8 @@ from .planner import (PLANNER_PROMPT, Plan, explicit_web, is_calendar_add, is_ev
 from ..websearch import WEB_PROMPT, WebError, WebSearch
 from ..vault.files import STOPWORDS
 from ..bible import BibleError, find_reference, passage as bible_passage
+from ..extract.events import parse_iso
+from .agenda import agenda_text, asked_days, events_between, is_agenda_question
 from .compound import annotation_parts, detail_line, link_clauses, split_request
 from .facts import BIRTHDAY_QUESTION, Birthday, birthday_context, collect_birthdays
 
@@ -301,6 +303,10 @@ class Assistant:
             yield {"type": "done"}
             return
 
+        if self.calendar is not None and is_agenda_question(prompt, datetime.now(self.settings.tz).date()):
+            async for event in self.handle_agenda(prompt):
+                yield event
+            return
         web_query = explicit_web(prompt) if self.web is not None and self.web.enabled else None
         people = self.match_people(prompt, await self.people_index())
         if web_query:
@@ -1062,6 +1068,48 @@ class Assistant:
             sources.append({"label": note_title(path), "url": self.obsidian_url(path), "path": path})
         return "\n\n".join(chunks), sources
 
+    async def calendar_events(self, first: date, after_last: date) -> list[dict]:
+        """Events overlapping the local days [first, after_last): from the copy the calendar job keeps when those
+        days are inside its window, otherwise (or before its first run) straight from Google."""
+        tz = self.settings.tz
+        now = datetime.now(tz)
+        synced = self.db.get("calendar.last_run")
+        events: list[dict] = []
+        inside = first >= (now - timedelta(days=1)).date() and after_last <= (now + timedelta(days=55)).date()
+        if synced and inside:
+            rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? "
+                               "ORDER BY start", ((after_last + timedelta(days=1)).isoformat(),
+                                                  (first - timedelta(days=1)).isoformat()))
+            events = [dict(r) for r in rows]
+        else:
+            for calendar_id in self.settings.google_calendar_ids:
+                events += await self.calendar.events(calendar_id, datetime.combine(first, dtime(0), tz),
+                                                     datetime.combine(after_last, dtime(0), tz))
+        return events_between(events, first, after_last, tz)
+
+    async def handle_agenda(self, prompt: str) -> AsyncIterator[dict]:
+        """What's on for a day or a few days — listed by script, in local time (no model call)."""
+        today = datetime.now(self.settings.tz).date()
+        first, after_last, label = asked_days(prompt, today)
+        yield {"type": "meta", "route": "calendar", "query": f"{first} – {after_last - timedelta(days=1)}",
+               "model": True}
+        try:
+            events = await self.calendar_events(first, after_last)
+        except GoogleError as error:
+            text = f"I couldn't read your calendar: {error}"
+            yield {"type": "token", "text": text}
+            yield {"type": "done"}
+            return
+        diag.event("calendar", f"{len(events)} event(s) {label or first.isoformat()}", days=(after_last - first).days)
+        text = agenda_text(events, first, after_last, label, today)
+        yield {"type": "sources", "items": [
+            {"label": f"{e['local_start']:%a %d %b}{'' if e['all_day'] else e['local_start'].strftime(' %H:%M')} "
+                      f"{e.get('summary') or ''}".strip(), "url": e.get("html_link") or ""}
+            for e in events[:15] if e.get("html_link")]}
+        yield {"type": "token", "text": text}
+        self.save_turn(prompt, text)
+        yield {"type": "done"}
+
     async def gather_calendar(self, query: str) -> tuple[str, list[dict]]:
         now = datetime.now(timezone.utc)
         events: dict[str, dict] = {}
@@ -1089,13 +1137,33 @@ class Assistant:
                     events[event["event_id"]] = event
             except GoogleError:
                 pass
-        ordered = sorted((e for e in events.values() if e["status"] != "cancelled"), key=lambda e: e["start"])[:80]
-        slim = [{k: e[k] for k in ("summary", "start", "end", "location")} |
+        tz = self.settings.tz
+
+        def local(value: str) -> str:
+            """Google gives times in UTC or the calendar's zone: show them as Chris's local time (BST/GMT)."""
+            if not value or len(value) == 10:
+                return value
+            try:
+                return f"{parse_iso(value, tz).astimezone(tz):%a %d %b %Y %H:%M}"
+            except ValueError:
+                return value
+
+        def day(value: str) -> str:
+            try:
+                return f"{datetime.fromisoformat(value):%a %d %b %Y} (all day)" if len(value) == 10 else local(value)
+            except ValueError:
+                return value
+        ordered = sorted((e for e in events.values() if e["status"] != "cancelled"),
+                         key=lambda e: parse_iso(e["start"], tz) if e["start"] else now)[:80]
+        slim = [{"summary": e["summary"], "start": day(e["start"]), "end": local(e["end"]) if len(e["end"]) != 10
+                 else "", "location": e["location"]} |
                 {"with": [a["name"] or a["email"] for a in e["attendees"] if not a.get("self")][:8]}
                 for e in ordered]
-        sources = [{"label": f"{e['start'][:16].replace('T', ' ')} {e['summary']}", "url": e["html_link"]}
+        sources = [{"label": f"{day(e['start']).replace(' (all day)', '')} {e['summary']}", "url": e["html_link"]}
                    for e in ordered[:15]]
-        return json.dumps(slim, ensure_ascii=False, indent=1), sources
+        today = datetime.now(tz)
+        return (f"Today is {today:%A %d %B %Y}; times are UK local time.\n"
+                + json.dumps(slim, ensure_ascii=False, indent=1)), sources
 
     async def gather_drive(self, query: str) -> tuple[str, list[dict]]:
         tools = await self.drive.tools()
