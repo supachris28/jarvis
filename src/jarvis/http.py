@@ -9,32 +9,43 @@ client per (timeout, verify) pair so connections are pooled and kept alive. The 
 from __future__ import annotations
 
 import asyncio
+import weakref
 
 import httpx
 
-_clients: dict[tuple, httpx.AsyncClient] = {}
+# Clients hold connections bound to one event loop, so they are kept per loop; a weak key lets a finished loop
+# (tests run one per case) take its clients with it instead of a reused id() handing them to a new loop.
+_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple, httpx.AsyncClient]]" = \
+    weakref.WeakKeyDictionary()
+_loopless: dict[tuple, httpx.AsyncClient] = {}
 LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=60)
 
 
-def shared(timeout: float | httpx.Timeout = 30, verify: bool | str = True, **kwargs) -> httpx.AsyncClient:
-    """A pooled client for plain request/response calls. Don't close it; don't use it as a context manager.
-
-    Clients are tied to the event loop whose connections they hold, so the cache is keyed by loop as well
-    (tests spin up a fresh loop per case)."""
+def _pool() -> dict[tuple, httpx.AsyncClient]:
     try:
-        loop_key: object = id(asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop_key = None
-    key = (loop_key, timeout if not isinstance(timeout, httpx.Timeout) else repr(timeout), verify,
-           tuple(sorted(kwargs.items())))
-    client = _clients.get(key)
+        return _loopless
+    pool = _clients.get(loop)
+    if pool is None:
+        pool = _clients[loop] = {}
+    return pool
+
+
+def shared(timeout: float | httpx.Timeout = 30, verify: bool | str = True, **kwargs) -> httpx.AsyncClient:
+    """A pooled client for plain request/response calls. Don't close it; don't use it as a context manager."""
+    pool = _pool()
+    key = (repr(timeout) if isinstance(timeout, httpx.Timeout) else timeout, verify, tuple(sorted(kwargs.items())))
+    client = pool.get(key)
     if client is None or client.is_closed:
         client = httpx.AsyncClient(timeout=timeout, verify=verify, limits=LIMITS, **kwargs)
-        _clients[key] = client
+        pool[key] = client
     return client
 
 
 async def aclose_all() -> None:
-    clients = list(_clients.values())
-    _clients.clear()
+    """Close this loop's clients (called from the app lifespan)."""
+    pool = _pool()
+    clients = list(pool.values())
+    pool.clear()
     await asyncio.gather(*(c.aclose() for c in clients if not c.is_closed), return_exceptions=True)
