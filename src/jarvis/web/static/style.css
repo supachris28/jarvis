@@ -17,7 +17,7 @@ button, .button { background: var(--accent); color: var(--accent-text); border: 
   font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
 button:disabled { opacity: .5; cursor: default; }
 button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-input, textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .6em .8em; width: 100%; }
+input, textarea, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .6em .8em; width: 100%; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 1rem; }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }
@@ -134,7 +134,7 @@ div.log-entry .log-summary { cursor: default; }
   font-size: .75rem; line-height: 1.4; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .log-body pre.error { color: var(--bad); }
 .details-panel { margin-top: .4rem; padding: .5rem; font-size: .85rem; }
-.row-actions { display: flex; gap: .4rem; align-items: center; }
+.row-actions { display: flex; gap: .4rem; align-items: center; flex: none; }
 .button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
 .small-button { padding: .2em .6em; font-size: .8rem; }
 
@@ -171,3 +171,15 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .cal-pick { display: inline-flex; align-items: center; gap: .3rem; margin-right: .4rem; }
 .cal-pick select { width: auto; max-width: 11rem; padding: .3rem .4rem; }
 .notify-pref .pref-options { display: flex; flex-direction: column; gap: .2rem; flex: none; }
+
+/* vault note reader */
+.note-body { overflow-wrap: anywhere; line-height: 1.5; }
+.note-body img { max-width: 100%; }
+.note-body pre { overflow-x: auto; }
+.note-body table { border-collapse: collapse; display: block; overflow-x: auto; }
+.note-body th, .note-body td { border: 1px solid var(--line); padding: .2rem .5rem; }
+.note-properties { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .8rem; margin: .6rem 0; }
+.note-properties dt { color: var(--muted); }
+.note-properties dd { margin: 0; overflow-wrap: anywhere; }
+#note-open { max-width: 100%; }
+.field { display: flex; flex-direction: column; gap: .3rem; }

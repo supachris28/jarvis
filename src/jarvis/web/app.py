@@ -26,6 +26,7 @@ from ..services import Services
 from ..tts import SpeechError
 from ..ha import HAError
 from ..vault.client import VaultError
+from ..vault.markdown import split_frontmatter
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -256,6 +257,45 @@ async def email_thread(request: Request) -> Response:
         return JSONResponse({"error": "not a Gmail thread id"}, status_code=400)
     data = await request.app.state.services.email_thread(thread_id)
     return JSONResponse(data, status_code=200 if data["messages"] else 404)
+
+
+def _note_candidates(db, target: str) -> list[str]:
+    """'People/Ben Topliss', 'Ben Topliss' or 'Ben Topliss.md' → vault paths to try, best first."""
+    target = target.split("#")[0].split("|")[0].strip().strip("/")
+    if not target:
+        return []
+    paths = [target if target.casefold().endswith(".md") else target + ".md"]
+    name = paths[0].rsplit("/", 1)[-1][:-3]
+    try:  # a bare [[Name]] link: find the note by its title in the index
+        rows = db.all("SELECT path FROM vault_notes WHERE path = ? COLLATE NOCASE OR title = ? COLLATE NOCASE "
+                      "OR path LIKE ? ORDER BY length(path) LIMIT 5", (paths[0], name, "%/" + name + ".md"))
+        paths += [r["path"] for r in rows if r["path"] not in paths]
+    except Exception:  # noqa: BLE001 — the Obsidian backend has no index; the exact path still works
+        pass
+    return paths
+
+
+async def vault_note(request: Request) -> Response:
+    """A vault note to read in Jarvis (phones have no Obsidian link handler). Read-only; .md notes only."""
+    services: Services = request.app.state.services
+    target = request.query_params.get("path", "")[:400]
+    for path in _note_candidates(services.db, target):
+        parts = path.split("/")
+        if any(p.startswith(".") or p in ("", "..") for p in parts):
+            continue
+        try:
+            text = await services.vault.get_text(path)
+        except VaultError as error:
+            if "not mounted" in str(error) or "offline" in str(error).casefold():
+                return JSONResponse({"error": str(error)}, status_code=503)
+            continue
+        if text is None:
+            continue
+        frontmatter, body = split_frontmatter(text)
+        properties = json.loads(json.dumps(frontmatter or {}, default=str))
+        return JSONResponse({"path": path, "title": path.rsplit("/", 1)[-1].removesuffix(".md"), "body": body,
+                             "properties": properties, "obsidian_url": services.assistant.obsidian_url(path)})
+    return JSONResponse({"error": f"There's no note called {target!r} in the vault."}, status_code=404)
 
 
 async def deliveries_list(request: Request) -> Response:
@@ -613,6 +653,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/notifications", notifications),
             Route("/api/notifications/test", test_notification, methods=["POST"]),
             Route("/api/vault/changes", vault_changes),
+            Route("/api/vault/note", vault_note),
             Route("/api/vault/revert/{id:int}", vault_revert, methods=["POST"]),
             Route("/auth/google/start", google_start),
             Route("/auth/google/callback", google_callback),

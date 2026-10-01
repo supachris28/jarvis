@@ -18,11 +18,33 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
 };
 
-/* [[Sources/Email/…]] notes open in Jarvis's email reader (works on phones); other notes open in Obsidian */
+/* Where vault notes open is a setting on each device (Status → This device): the Obsidian app, or Jarvis's own
+   reader. "Auto" picks Obsidian on computers and Jarvis on phones and tablets, which have no Obsidian link handler. */
+function noteSetting() { return store.get("jarvis.notes", "auto"); }
+function isPhone() {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.matchMedia("(pointer: coarse)").matches;
+}
+function notesInJarvis() {
+  const setting = noteSetting();
+  return setting === "jarvis" || (setting === "auto" && isPhone());
+}
+/* [[Sources/Email/…]] notes open in Jarvis's email reader everywhere; other notes follow the device setting */
 function wikiHref(target) {
   if (/^Sources\/Email\//i.test(target)) return `#email?note=${encodeURIComponent(target)}`;
+  if (notesInJarvis()) return `#note?path=${encodeURIComponent(target)}`;
   return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(target)}`;
 }
+/* Links made by the server (sources under answers, Vault changes, history) are obsidian:// links: on a device set
+   to Jarvis they open in the reader instead. */
+document.addEventListener("click", (event) => {
+  const link = event.target.closest && event.target.closest('a[href^="obsidian://open"]');
+  if (!link || !notesInJarvis()) return;
+  const file = new URL(link.getAttribute("href")).searchParams.get("file");
+  if (!file) return;
+  event.preventDefault();
+  location.hash = /^Sources\/Email\//i.test(file) ? `#email?note=${encodeURIComponent(file)}`
+                                                   : `#note?path=${encodeURIComponent(file)}`;
+}, true);
 
 /* ---------- tiny, safe markdown ---------- */
 function inline(text) {
@@ -127,6 +149,7 @@ function route() {
     const params = new URLSearchParams(location.hash.split("?")[1] || "");
     loadEmail(params.get("thread"), params.get("note"));
   }
+  if (view === "note") loadNote(new URLSearchParams(location.hash.split("?")[1] || "").get("path"));
   if (view === "chat") {
     $("#prompt").focus();
     if (chatNeedsScroll) requestAnimationFrame(scrollChatToBottom);  // messages added while this tab was hidden
@@ -624,6 +647,41 @@ async function loadEmail(threadId, notePath) {
 }
 $("#email-back").addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else location.hash = "#chat"; });
 
+/* ---------- reading a vault note inside Jarvis ---------- */
+function propertyValue(value) {
+  if (Array.isArray(value)) return value.map(propertyValue).join(", ");
+  if (value && typeof value === "object") return esc(JSON.stringify(value));
+  return markdown(String(value ?? "")).replace(/^<p>([\s\S]*)<\/p>\s*$/, "$1");  // [[links]] in properties work too
+}
+async function loadNote(path) {
+  $("#note-title").textContent = "Loading…";
+  $("#note-path").textContent = "";
+  $("#note-properties").innerHTML = "";
+  $("#note-body").innerHTML = "";
+  if (!path) return;
+  const response = await api(`/api/vault/note?path=${encodeURIComponent(path)}`);
+  const data = await response.json();
+  if (!response.ok) { $("#note-title").textContent = data.error || "Couldn't open that note."; return; }
+  $("#note-title").textContent = data.title;
+  $("#note-path").textContent = data.path;
+  $("#note-obsidian").href = data.obsidian_url;
+  const props = Object.entries(data.properties || {}).filter(([, v]) => v !== null && v !== "");
+  $("#note-properties").innerHTML = props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${propertyValue(v)}</dd>`).join("");
+  $("#note-properties").classList.toggle("hidden", !props.length);
+  $("#note-body").innerHTML = markdown(data.body || "");
+}
+$("#note-back").addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else location.hash = "#chat"; });
+
+/* ---------- this device's settings (kept in this browser only) ---------- */
+function showDeviceSettings() {
+  const select = $("#note-open");
+  select.value = noteSetting();
+  $("#note-open-hint").textContent = select.value === "auto"
+    ? `This device looks like ${isPhone() ? "a phone or tablet, so notes open in Jarvis" : "a computer, so notes open in Obsidian"}.`
+    : "";
+}
+$("#note-open").addEventListener("change", (event) => { store.set("jarvis.notes", event.target.value); showDeviceSettings(); });
+
 /* ---------- deliveries ---------- */
 function deliveryCard(d) {
   const el = document.createElement("div");
@@ -724,6 +782,7 @@ $("#scan-events").addEventListener("click", async (event) => {
 
 /* ---------- status ---------- */
 async function loadStatus() {
+  showDeviceSettings();
   const data = await (await api("/api/status")).json();
   const names = { model: "Model (PC)", obsidian: "Vault", google: "Google", ntfy: "Notifications", voice: "Voice", home: "Home Assistant", web: "Internet search" };
   const google = data.components.google || {};

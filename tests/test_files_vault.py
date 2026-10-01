@@ -180,6 +180,28 @@ class FilesBackendIntegration(IntegrationBase):
         self.assertTrue(health["ok"], health)
         self.assertIn("writes via Nextcloud", health["detail"])
 
+    def test_notes_can_be_read_in_jarvis(self):
+        from starlette.testclient import TestClient
+        from jarvis.auth import Auth
+        from jarvis.web.app import create_app
+        (self.vault_dir / ".obsidian").mkdir()
+        (self.vault_dir / ".obsidian" / "app.md").write_text("private")
+        Auth(self.services.db).set_password("a very long password")
+        h = {"X-Jarvis": "1"}
+        with TestClient(create_app(self.settings, self.services, start_jobs=False),
+                        base_url="http://localhost:8080") as client:
+            self.assertEqual(client.get("/api/vault/note?path=Notes/Hiking").status_code, 401)
+            client.post("/api/login", json={"password": "a very long password"}, headers=h)
+            for target in ("People/Sam Jones", "People/Sam Jones.md", "Sam Jones", "sam jones", "Sam Jones#Contact"):
+                note = client.get("/api/vault/note", params={"path": target}, headers=h).json()
+                self.assertEqual(note["path"], "People/Sam Jones.md", target)
+            self.assertEqual(note["title"], "Sam Jones")
+            self.assertEqual(note["properties"]["relation"], "friend")
+            self.assertNotIn("emails:", note["body"])
+            self.assertTrue(note["obsidian_url"].startswith("obsidian://open?"))
+            for bad in ("Nowhere", "../etc/passwd", ".obsidian/app", "", "/"):
+                self.assertEqual(client.get("/api/vault/note", params={"path": bad}, headers=h).status_code, 404, bad)
+
     def test_people_you_wrote_yourself_are_found_by_name(self):
         s = self.services
         s.settings.web_search_provider = "searxng"  # would search online if it didn't recognise her

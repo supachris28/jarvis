@@ -98,6 +98,17 @@
         <div id="email-messages" class="list"></div>
       </section>
 
+      <section id="view-note" class="view hidden">
+        <div class="toolbar">
+          <button id="note-back" class="ghost">← Back</button>
+          <a id="note-obsidian" class="button ghost">Open in Obsidian</a>
+        </div>
+        <h2 id="note-title"></h2>
+        <div id="note-path" class="muted small"></div>
+        <dl id="note-properties" class="card note-properties hidden"></dl>
+        <div id="note-body" class="card note-body"></div>
+      </section>
+
       <section id="view-status" class="view hidden">
         <div class="toolbar">
           <h2>Status</h2>
@@ -117,6 +128,19 @@
           <div class="toolbar"><span id="calendar-status" class="muted small"></span>
             <button id="calendar-save">Save</button></div>
         </details>
+        <div class="card">
+          <h3>This device</h3>
+          <label class="field">Open vault notes in
+            <select id="note-open">
+              <option value="auto">Auto — Obsidian on a computer, Jarvis on a phone</option>
+              <option value="obsidian">The Obsidian app</option>
+              <option value="jarvis">Jarvis (read here)</option>
+            </select>
+          </label>
+          <p id="note-open-hint" class="muted small"></p>
+          <p class="muted small">Saved in this browser only, so your phone and computer can differ. Email notes always
+            open in Jarvis's email reader.</p>
+        </div>
         <h3>Background jobs</h3>
         <div id="jobs" class="list"></div>
         <div class="toolbar">
