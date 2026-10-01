@@ -274,7 +274,8 @@ class Database:
                                          "kind": "TEXT NOT NULL DEFAULT 'add'",          # add | note
                                          "target_event_id": "TEXT NOT NULL DEFAULT ''"},  # note: event to update
                      "event_scan": {"automated": "INTEGER NOT NULL DEFAULT 0"},
-                     "scheduled": {"decided": "REAL"}}
+                     "scheduled": {"decided": "REAL"},
+                     "deliveries": {"item_checked": "INTEGER NOT NULL DEFAULT 0"}}
         for table, columns in additions.items():
             existing = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
             for name, definition in columns.items():

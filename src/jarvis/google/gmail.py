@@ -208,6 +208,11 @@ class Gmail:
             if not page:
                 return ids, latest
 
+    async def thread_messages(self, thread_id: str) -> list[dict]:
+        """Every message in a thread, in full (for re-reading old emails)."""
+        data = await self.oauth.get(f"{BASE}/threads/{thread_id}", {"format": "full"})
+        return data.get("messages", []) or []
+
     async def search_threads(self, query: str, limit: int = 15) -> list[dict]:
         listed = await self.oauth.get(f"{BASE}/threads", {"q": query, "maxResults": limit})
         results = []

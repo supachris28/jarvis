@@ -178,6 +178,34 @@ class DeliveryTests(IntegrationBase):
     def _ask(self, text):
         return self._collect(self.services.assistant.handle(text))
 
+    def test_item_names_for_new_and_older_deliveries(self):
+        s = self.services
+        d = s.deliveries
+        argos = parse_message(self.email("i1", "Argos <noreply@argos.co.uk>", "Your Argos order has been dispatched",
+                                         "Your order AR555 is on its way. Tracking number: AB333333333GB\n\n"
+                                         "Tefal Ultimate Iron\nQty: 1\n£34.99\n\nDelivery £3.95"))
+        item = d.get(d.on_message(argos))
+        self.assertEqual((item["name"], item["retailer"]), ("Tefal Ultimate Iron", "Argos"))
+        amazon = parse_message(self.email("i2", "Amazon.co.uk <shipment-tracking@amazon.co.uk>",
+                                          'Dispatched: "Philips HD9350 Kettle" and 2 more items',
+                                          "Your package is on the way. Track your package: https://amazon.co.uk/progress-tracker/x"))
+        self.assertEqual(d.get(d.on_message(amazon))["item"], "Philips HD9350 Kettle +2 more")
+        # a carrier's email names the shop it's from, not the carrier, as the retailer
+        rm = parse_message(self.email("i3", "Royal Mail <no-reply@royalmail.com>", "Your parcel is on its way",
+                                      "Your parcel from Hobbycraft is on its way. Tracking number AB444444444GB."))
+        self.assertEqual(d.get(d.on_message(rm))["retailer"], "Hobbycraft")
+        # a delivery recorded before items were read: its stored email is re-read
+        s.db.execute("INSERT INTO emails (message_id, thread_id, ts, from_addr, from_name, to_addrs, subject, labels, bulk, "
+                     "outgoing, snippet, body, attachments) VALUES ('old1', 'told1', 1, 'x@lakeland.co.uk', 'Lakeland', "
+                     "'[]', 'Your order is on its way', '[]', 1, 0, '', ?, '[]')",
+                     ("Your order\nLakeland Dehumidifier 12L   £149.99\nDelivery   £0.00",))
+        s.db.execute("INSERT INTO deliveries (created, updated, retailer, status, thread_id, history) "
+                     "VALUES (1, ?, 'Lakeland', 'dispatched', 'told1', '[]')", (time.time(),))
+        self.assertEqual(self.run_async(d.fill_items()), 1)
+        self.assertEqual(s.db.one("SELECT item FROM deliveries WHERE thread_id = 'told1'")["item"],
+                         "Lakeland Dehumidifier 12L")
+        self.assertEqual(self.run_async(d.fill_items()), 0)  # each one is only tried once
+
     def test_chat(self):
         s = self.services
 

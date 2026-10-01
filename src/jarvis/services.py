@@ -110,6 +110,7 @@ class Services:
         self.deliveries = Deliveries(settings, self.db, self.notifier)
         self.gmail_pipeline.deliveries = self.deliveries
         self.deliveries.gmail = self.gmail
+        self.deliveries.llm = self.llm
         try:
             self.events.cleanup_noise()  # suggestions from T&Cs/policy/offer emails made by older versions
         except Exception:  # noqa: BLE001 — never block startup on housekeeping
