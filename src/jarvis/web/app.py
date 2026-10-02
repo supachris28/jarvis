@@ -91,7 +91,7 @@ async def index(request: Request) -> Response:
     # versioned script/style URLs so a new release is never run with a stale app.js from the browser cache
     from .. import __version__
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    for asset in ("/static/app.js", "/static/style.css", "/static/vendor/marked.umd.js", "/static/vendor/purify.min.js"):
+    for asset in ("/static/app.js", "/static/lights.js", "/static/style.css", "/static/vendor/marked.umd.js", "/static/vendor/purify.min.js"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 

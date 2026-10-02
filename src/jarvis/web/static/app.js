@@ -169,6 +169,28 @@ function showShared(item) {
   scrollChatToBottom();
 }
 
+/* the lights show one amber/red segment per part of Jarvis that is down */
+let lightsMounted = false;
+const STATUS_NAMES = { model: "model (PC)", obsidian: "vault", google: "Google", ntfy: "notifications", voice: "voice",
+                       home: "Home Assistant", web: "internet search" };
+function healthProblems(data) {
+  const down = Object.entries(data.components || {})
+    .filter(([, c]) => !c.ok && !/not configured|disabled|switched off|browser voice/i.test(c.detail || ""))
+    .map(([key]) => STATUS_NAMES[key] || key);
+  const jobs = (data.jobs || []).filter((j) => j.ok === false).map((j) => `${j.name} job`);
+  return [...down, ...jobs];
+}
+async function checkHealth() {
+  try {
+    const response = await api("/api/status");
+    if (!response.ok) return;
+    Lights.setProblems(healthProblems(await response.json()));
+    if (Lights.state === "offline") Lights.set("idle");
+  } catch (error) {
+    if (error.message !== "signed out") Lights.set("offline");
+  }
+}
+
 async function boot() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   const session = await (await fetch("/api/session", { credentials: "same-origin" })).json();
@@ -178,6 +200,7 @@ async function boot() {
   updateVoiceButton();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  if (!lightsMounted) { Lights.mount($("#visor")); lightsMounted = true; checkHealth(); setInterval(checkHealth, 600000); }
   route();
   await loadHistory();
   const item = takeIncoming();
@@ -306,6 +329,8 @@ $("#messages").addEventListener("click", (event) => {
   recallIndex = -1;
   setPrompt(message.dataset.text);
 });
+$("#prompt").addEventListener("keydown", (e) => { if (e.key.length === 1 || e.key === "Backspace") Lights.ripple(); });
+$("#prompt").addEventListener("blur", () => { if (Lights.state === "listening") Lights.set("idle"); });
 $("#prompt").addEventListener("input", (e) => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px"; });
 $("#chat-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -317,6 +342,7 @@ $("#chat-form").addEventListener("submit", async (event) => {
   stopSpeaking();
   unlockAudio();  // lets a "read me …" reply play on phones even with voice off
   addMessage("user", message);
+  Lights.set("thinking");
   const bubble = addMessage("assistant", "");
   bubble.classList.add("pending");
   const body = bubble.querySelector(".body");
@@ -335,19 +361,24 @@ $("#chat-form").addEventListener("submit", async (event) => {
         const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
         if (!line.trim()) continue;
         const ev = JSON.parse(line);
-        if (ev.type === "meta") meta = ev;
+        if (ev.type === "meta") {
+          meta = ev;
+          if (ev.route && !["chat", "blocked", "remember", "calendar-add"].includes(ev.route)) Lights.set("looking", ev.route);
+        }
         if (ev.type === "trace") traceId = ev.id;
         if (ev.type === "sources") sources = ev.items || [];
         if (ev.type === "proposals") (ev.items || []).forEach((p) => bubble.appendChild(proposalCard(p)));
         if (ev.type === "actions") (ev.items || []).forEach((a) => bubble.appendChild(actionCard(a)));
         if (ev.type === "clear") { text = ""; body.innerHTML = ""; }
         if (ev.type === "status" && !text) body.innerHTML = `<p class="status">${esc(ev.text)}</p>`;  // replaced by the answer
-        if (ev.type === "token") { text += ev.text; body.innerHTML = markdown(text); bubble.scrollIntoView({ block: "end" }); }
+        if (ev.type === "token") { Lights.token(); text += ev.text; body.innerHTML = markdown(text); bubble.scrollIntoView({ block: "end" }); }
       }
     }
+    Lights.flash("done");
   } catch (error) {
     text += `\n\n(${error.message})`;
     body.innerHTML = markdown(text);
+    Lights.flash("error");
   }
   bubble.classList.remove("pending");
   const foot = [];
@@ -419,6 +450,7 @@ function stopSpeaking() {
 /* one "Stop" control: a floating button while anything is speaking, and the reply's own ▶ Speak turns into ■ Stop */
 let speakingButton = null;
 function setSpeaking(button) {
+  if (!button && !speakingNow() && Lights.state === "speaking") Lights.set("idle");
   if (speakingButton && speakingButton !== button) speakingButton.textContent = "▶ Speak";
   speakingButton = button;
   if (button) button.textContent = "■ Stop";
@@ -471,6 +503,7 @@ async function browserSpeak(parts, run) {
       const utterance = new SpeechSynthesisUtterance(part.text);
       utterance.voice = voice; utterance.lang = "en-GB";
       utterance.onend = resolve; utterance.onerror = resolve;
+      utterance.onboundary = () => Lights.bump(1.1, Math.floor(Math.random() * 3) + 5);
       speechSynthesis.speak(utterance);
     });
     if (part.pause) await wait(part.pause);
@@ -483,6 +516,7 @@ async function speak(text, button = null) {
   if (!parts.length) return;
   setSpeaking(button);
   $("#stop-speech").classList.remove("hidden");
+  Lights.set("speaking");
   try {
     if (ttsProvider === "browser") { await browserSpeak(parts, run); return; }
     let next = fetchAudio(parts[0].text);
@@ -502,6 +536,7 @@ async function speak(text, button = null) {
     }
   } finally {
     if (run === speechRun) setSpeaking(null), $("#stop-speech").classList.add("hidden");
+    if (run === speechRun && Lights.state === "speaking") Lights.set("idle");
   }
 }
 async function fetchAudio(text) {
@@ -734,12 +769,19 @@ $("#note-back").addEventListener("click", () => { if (window.history.length > 1)
 
 /* ---------- this device's settings (kept in this browser only) ---------- */
 function showDeviceSettings() {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  $("#install-mode").textContent = standalone
+    ? "✅ Opened as an installed app."
+    : "ℹ️ Opened in a browser tab — open Jarvis from its home-screen icon to check the installed app.";
   const select = $("#note-open");
   select.value = noteSetting();
   $("#note-open-hint").textContent = select.value === "auto"
     ? `This device looks like ${isPhone() ? "a phone or tablet, so notes open in Jarvis" : "a computer, so notes open in Obsidian"}.`
     : "";
 }
+$("#share-test").addEventListener("click", () => {
+  location.href = "/?share_text=" + encodeURIComponent("Bowling Saturday 6pm at Hollywood Bowl — test share");
+});
 $("#note-open").addEventListener("change", (event) => { store.set("jarvis.notes", event.target.value); showDeviceSettings(); });
 
 /* ---------- deliveries ---------- */
@@ -844,6 +886,7 @@ $("#scan-events").addEventListener("click", async (event) => {
 async function loadStatus() {
   showDeviceSettings();
   const data = await (await api("/api/status")).json();
+  Lights.setProblems(healthProblems(data));
   const names = { model: "Model (PC)", obsidian: "Vault", google: "Google", ntfy: "Notifications", voice: "Voice", home: "Home Assistant", web: "Internet search" };
   const google = data.components.google || {};
   $("#google-connect").classList.toggle("hidden", !!google.ok);  // only needed until Google is connected

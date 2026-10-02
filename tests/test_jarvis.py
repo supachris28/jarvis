@@ -358,6 +358,13 @@ class IntegrationTests(IntegrationBase):
             self.assertEqual(client.post("/api/login", json={"password": "a very long password"}, headers=h)
                              .status_code, 200)
             self.assertIn("default-src 'self'", client.get("/").headers["content-security-policy"])
+            # installable with a share target: manifest and every icon it names are served without signing in
+            manifest = TestClient(app, base_url="http://localhost:8080").get("/manifest.webmanifest").json()
+            self.assertEqual(manifest["share_target"]["action"], "/")
+            for icon in manifest["icons"] + [i for s in manifest["shortcuts"] for i in s["icons"]]:
+                self.assertEqual(TestClient(app, base_url="http://localhost:8080").get(icon["src"]).status_code, 200,
+                                 icon["src"])
+            self.assertIn("/static/lights.js?v=", client.get("/").text)
             status = client.get("/api/status").json()
             self.assertTrue(status["components"]["model"]["ok"], status)
             self.assertTrue(status["components"]["obsidian"]["ok"], status)

@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/vendor/purify.min.js" defer></script>
   <script src="/static/vendor/marked.umd.js" defer></script>
+  <script src="/static/lights.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -31,6 +32,24 @@
   <div id="app" class="app hidden">
     <header>
       <span class="brand">Jarvis</span>
+      <button id="visor" class="visor" type="button" aria-label="Jarvis's lights. Tap for what they mean."><canvas></canvas></button>
+      <div id="lights-legend" class="lights-legend card hidden" role="dialog" aria-label="What the lights mean">
+        <p><strong>Right now:</strong> <span class="now"></span></p>
+        <ul>
+          <li><i class="l-idle"></i><span><b>Slow blue wave</b> — all well, waiting (with the odd blink)</span></li>
+          <li><i class="l-idle pulse"></i><span><b>Ripples</b> — listening as you type</span></li>
+          <li><i class="l-think scan"></i><span><b>White-blue scanner</b> — thinking about what you asked</span></li>
+          <li><i class="places"></i><span><b>Filling colour</b> — looking in notes <em class="c-vault">violet</em>, email
+            <em class="c-gmail">red</em>, calendar <em class="c-calendar">green</em>, Drive <em class="c-drive">yellow</em>,
+            home <em class="c-home">orange</em>, web <em class="c-web">teal</em></span></li>
+          <li><i class="l-talk"></i><span><b>Flicker</b> — writing the answer, word by word</span></li>
+          <li><i class="l-speak"></i><span><b>Equaliser from the centre</b> — reading aloud</span></li>
+          <li><i class="l-done"></i><span><b>Green sweep</b> — done</span></li>
+          <li><i class="l-error"></i><span><b>Red blinks</b> — something went wrong</span></li>
+          <li><i class="l-alert"></i><span><b>Amber/red on the right</b> — one per part of Jarvis that's down (see Status)</span></li>
+          <li><i class="l-off"></i><span><b>Dim grey</b> — can't reach the Jarvis server</span></li>
+        </ul>
+      </div>
       <button id="voice-toggle" class="ghost voice" type="button" aria-pressed="false">🔈 Voice off</button>
       <nav>
         <a href="#chat" data-view="chat">Chat</a>
@@ -140,6 +159,14 @@
           <p id="note-open-hint" class="muted small"></p>
           <p class="muted small">Saved in this browser only, so your phone and computer can differ. Email notes always
             open in Jarvis's email reader.</p>
+          <h4>Sharing to Jarvis</h4>
+          <p id="install-mode" class="small"></p>
+          <p class="muted small">Jarvis only appears in Android's share menu when Chrome installed it as a full app
+            (Chrome menu → <em>Install app</em>, not <em>Add to home screen</em>). A sign it worked: long-pressing the
+            Jarvis icon shows <em>Today</em>, <em>Tomorrow</em> and <em>Plan</em>. If not, Google's servers probably
+            couldn't fetch this site to build the app (for example a geo-block or IP allow-list in front of Jarvis),
+            and Chrome made a plain shortcut instead.</p>
+          <button id="share-test" class="ghost" type="button">Try the share screen</button>
         </div>
         <h3>Background jobs</h3>
         <div id="jobs" class="list"></div>

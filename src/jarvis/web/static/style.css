@@ -194,3 +194,26 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .shared .shared-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 .5rem; }
 .shared-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .shared-actions button { font-size: .85rem; padding: .35rem .7rem; }
+
+/* Jarvis's lights (lights.js) */
+header { position: relative; }
+.visor { flex: 1 1 160px; max-width: 300px; height: 38px; padding: 5px 9px; margin: 0 auto 0 .2rem; border-radius: 999px;
+  background: #07090c; border: 1px solid #1f2630; box-shadow: inset 0 0 10px rgba(0, 0, 0, .9); cursor: pointer; }
+.visor canvas { width: 100%; height: 100%; display: block; }
+.lights-legend { position: absolute; top: calc(100% + 6px); left: 16px; right: 16px; max-width: 480px; z-index: 20;
+  font-size: .85rem; box-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
+.lights-legend ul { list-style: none; padding: 0; margin: .4rem 0 0; display: grid; gap: .35rem; }
+.lights-legend li { display: flex; gap: .5rem; align-items: baseline; }
+.lights-legend i { flex: none; width: 26px; height: 8px; border-radius: 4px; background: rgb(var(--c));
+  box-shadow: 0 0 6px rgb(var(--c)); transform: translateY(-1px); }
+.l-idle { --c: 91, 141, 239; } .l-think { --c: 170, 200, 255; } .l-talk { --c: 224, 231, 255; }
+.l-speak { --c: 125, 211, 252; } .l-done { --c: 74, 222, 128; } .l-error { --c: 248, 113, 113; }
+.l-alert { --c: 251, 176, 34; } .l-off { --c: 120, 128, 140; }
+.lights-legend i.places { background: linear-gradient(90deg, #a78bfa, #f87171, #34d399, #facc15, #fb923c, #2dd4bf); box-shadow: none; }
+.lights-legend em { font-style: normal; font-weight: 600; }
+.c-vault { color: #a78bfa; } .c-gmail { color: #f87171; } .c-calendar { color: #34d399; }
+.c-drive { color: #ca8a04; } .c-home { color: #fb923c; } .c-web { color: #14b8a6; }
+@media (max-width: 560px) {
+  .visor { order: 1; max-width: none; height: 32px; }
+  header .voice { order: 2; }
+}
