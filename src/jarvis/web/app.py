@@ -298,6 +298,37 @@ async def vault_note(request: Request) -> Response:
     return JSONResponse({"error": f"There's no note called {target!r} in the vault."}, status_code=404)
 
 
+async def deadlines_list(request: Request) -> Response:
+    deadlines = request.app.state.services.deadlines
+    return JSONResponse({"deadlines": deadlines.upcoming(), "waiting": deadlines.waiting(),
+                         "followup_days": request.app.state.settings.followup_days,
+                         "looked_back": bool(request.app.state.services.db.get("deadlines.looked_back"))})
+
+
+async def deadline_update(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    ok = request.app.state.services.deadlines.set_status(request.path_params["id"], str((body or {}).get("status", "")))
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 400)
+
+
+async def followup_dismiss(request: Request) -> Response:
+    thread_id = request.path_params["thread_id"]
+    if not re.fullmatch(r"[0-9a-fA-F]{6,32}", thread_id):
+        return JSONResponse({"error": "not a Gmail thread id"}, status_code=400)
+    request.app.state.services.deadlines.dismiss_waiting(thread_id)
+    return JSONResponse({"ok": True})
+
+
+async def deadlines_look_back(request: Request) -> Response:
+    try:
+        return JSONResponse(await request.app.state.services.deadlines.look_back())
+    except GoogleError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
 async def deliveries_list(request: Request) -> Response:
     return JSONResponse({"items": request.app.state.services.deliveries.active()})
 
@@ -714,6 +745,10 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/diag/export", diag_export),
             Route("/api/scheduled", scheduled_list),
             Route("/api/email/{thread_id}", email_thread),
+            Route("/api/deadlines", deadlines_list),
+            Route("/api/deadlines/look-back", deadlines_look_back, methods=["POST"]),
+            Route("/api/deadlines/{id:int}", deadline_update, methods=["POST"]),
+            Route("/api/followups/{thread_id}/dismiss", followup_dismiss, methods=["POST"]),
             Route("/api/deliveries", deliveries_list),
             Route("/api/deliveries", deliveries_add, methods=["POST"]),
             Route("/api/deliveries/{id:int}/check", delivery_check, methods=["POST"]),

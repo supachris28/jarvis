@@ -228,6 +228,17 @@ You need Docker Desktop on the PC.
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
 - Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
 
+### Renewals, deadlines and replies you're waiting for
+
+Jarvis reads renewal notices (insurance, subscriptions, memberships, licences), MOT reminders, "return by" dates,
+trial endings and payment due dates from your email — by script, no model — and reminds you ahead of each: two
+weeks for renewals, three for an MOT, a few days for returns, trials and payments ("Renewals and deadlines" in the
+notification settings). The first time it runs it reads the past year of email and sends one summary. They're
+listed in Plan, the morning brief (next fortnight) and the evening preview (due tomorrow); mark one Done or
+"Not this". Emails you sent that ask something and have had no reply after `FOLLOWUP_DAYS` (default 3) days are
+listed under "Waiting on a reply" (a notification is available, off by default). Ask "any renewals coming up?" or
+"who hasn't replied?" in chat.
+
 ### Backups
 
 Every night at `BACKUP_TIME` (default 03:15, `off` to disable) Jarvis copies its database — reminders, deliveries,

@@ -53,6 +53,12 @@ EVENING = re.compile(r"\b(evening (?:brief|preview)|tomorrow'?s (?:brief|preview
                      r"prepare (?:me )?for tomorrow|ready for tomorrow|what do i need (?:for|to know about) tomorrow)\b",
                      re.IGNORECASE)
 
+DEADLINE_QUESTION = re.compile(r"\b(renewals?|deadlines?|due dates?|returns? (?:by|due|deadline)|bills? due|"
+                               r"what(?:'s| is) (?:due|expiring|renewing)|anything (?:due|expiring|renewing))\b", re.I)
+WAITING_QUESTION = re.compile(r"\b(?:who (?:hasn'?t|has not|didn'?t) (?:replied|got back|answered|responded)|"
+                              r"waiting (?:on|for) (?:a )?(?:repl(?:y|ies)|answers?|anyone|people)|"
+                              r"(?:no|any) repl(?:y|ies) (?:yet|to my emails?)|chase up|follow(?:-| )?ups?)\b", re.I)
+
 PERSONA = (
     "You are Jarvis, Chris's personal assistant. Be concise, warm and practical. "
     "Use only facts you are given or general knowledge; say so when the data does not answer the question. "
@@ -164,6 +170,7 @@ class Assistant:
                  ha: HomeAssistant | None = None, web: WebSearch | None = None) -> None:
         self.settings = settings
         self.deliveries = None  # Deliveries, attached by Services
+        self.deadlines = None  # Deadlines, attached by Services
         self.db = db
         self.llm = llm
         self.vault = vault
@@ -315,6 +322,22 @@ class Assistant:
             yield {"type": "done"}
             return
 
+        if self.deadlines is not None and (DEADLINE_QUESTION.search(prompt) or WAITING_QUESTION.search(prompt)) \
+                and not is_write_request(prompt):
+            waiting = bool(WAITING_QUESTION.search(prompt))
+            yield {"type": "meta", "route": "gmail" if waiting else "calendar", "model": True}
+            if waiting:
+                lines = self.deadlines.waiting_lines()
+                text = ("**Waiting on a reply**\n" + "\n".join(f"- {line}" for line in lines)) if lines else \
+                    "Nobody owes you a reply — no unanswered questions in emails you sent in the last three weeks."
+            else:
+                lines = self.deadlines.lines(None)
+                text = ("**Renewals and deadlines**\n" + "\n".join(f"- {line}" for line in lines)) if lines else \
+                    "No renewals or deadlines found in your email."
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
+            return
         if self.calendar is not None and is_agenda_question(prompt, datetime.now(self.settings.tz).date()):
             async for event in self.handle_agenda(prompt):
                 yield event

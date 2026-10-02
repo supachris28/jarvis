@@ -25,6 +25,7 @@ from .notify import Notifier
 from .pipelines.calendar import CalendarPipeline
 from .pipelines.brief import Brief
 from .pipelines.contacts import ContactsPipeline
+from .pipelines.deadlines import Deadlines
 from .pipelines.deliveries import Deliveries
 from .pipelines.events import EventFinder
 from .pipelines.scheduled import Scheduler
@@ -121,6 +122,8 @@ class Services:
         self.gmail_pipeline.finder = self.events
         self.deliveries = Deliveries(settings, self.db, self.notifier)
         self.gmail_pipeline.deliveries = self.deliveries
+        self.deadlines = Deadlines(settings, self.db, self.notifier, self.gmail)
+        self.gmail_pipeline.deadlines = self.deadlines
         self.deliveries.gmail = self.gmail
         self.deliveries.llm = self.llm
         try:
@@ -140,6 +143,7 @@ class Services:
                                    self.calendar, self.drive, self.events, self.scheduler, self.brief, self.ha,
                                    self.web)
         self.assistant.deliveries = self.brief.deliveries = self.deliveries
+        self.assistant.deadlines = self.brief.deadlines = self.deadlines
         self.brief.birthday_source = self.assistant.birthdays  # contacts + People notes + vault mentions
         self.ha.alias_source = self.assistant.home_names  # "gas water heater" → water_heater.thermostat1
         self._learn_home_names_from_captures()
@@ -161,6 +165,8 @@ class Services:
                 f"Back up Jarvis's database at {settings.backup_time or 'off'} (server + Nextcloud)"),
             Job("evening", 60, self.brief.run_evening, f"Evening preview of tomorrow at {settings.evening_time or 'off'}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
+            Job("deadlines", 3600, self._google(self.deadlines.run),
+                "Renewals, deadlines and replies you're waiting for (from email)"),
             Job("deliveries", 3600, self._deliveries_job, "Follow tracking links of active deliveries"),
             Job("vault", 60, self.writer.flush, "Write queued notes to Obsidian"),
             Job("saves", 60, self.notify_saves, "Tell you what was saved to the vault"),

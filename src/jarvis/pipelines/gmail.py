@@ -33,6 +33,7 @@ class GmailPipeline:
         self.notifier = notifier
         self.finder = None  # EventFinder, attached by Services
         self.deliveries = None  # Deliveries, attached by Services
+        self.deadlines = None  # Deadlines, attached by Services
 
     async def run(self) -> dict:
         started = time.time()
@@ -97,6 +98,12 @@ class GmailPipeline:
                         self.deliveries.on_message(message)
                     except Exception as error:  # noqa: BLE001
                         diag.error("deliveries", f"delivery check failed for “{message.subject[:60]}”: "
+                                   f"{type(error).__name__}: {error}", error, id=message.message_id)
+                if self.deadlines is not None:
+                    try:
+                        self.deadlines.on_message(message)
+                    except Exception as error:  # noqa: BLE001
+                        diag.error("deadlines", f"deadline check failed for “{message.subject[:60]}”: "
                                    f"{type(error).__name__}: {error}", error, id=message.message_id)
                 if message.bulk:
                     bulk += 1

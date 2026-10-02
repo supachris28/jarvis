@@ -217,3 +217,7 @@ header { position: relative; }
   .visor { order: 1; max-width: none; height: 32px; }
   header .voice { order: 2; }
 }
+
+/* renewals and deadlines */
+.deadline { display: grid; gap: .25rem; }
+.deadline.soon { border-color: var(--warn); }

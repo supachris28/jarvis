@@ -92,6 +92,7 @@ class Settings:
     ha_verify_tls: bool = True
 
     brief_time: str = "07:30"
+    followup_days: int = 3               # nudge about emails you sent that got no reply after this many days
     backup_time: str = "03:15"           # nightly database backup; "off" to disable
     backup_dir: str = "Backups/Jarvis"   # Nextcloud folder for backups (never inside the vault)
     evening_time: str = "21:00"         # evening preview of tomorrow; "" or "off" to switch it off
@@ -192,6 +193,7 @@ class Settings:
             brief_time=_str("BRIEF_TIME", "07:30"),
             evening_time=_str("EVENING_TIME", "21:00"),
             backup_time=_str("BACKUP_TIME", "03:15"),
+            followup_days=_int("FOLLOWUP_DAYS", 3),
             backup_dir=_str("BACKUP_DIR", "Backups/Jarvis"),
             brief_latitude=_str("BRIEF_LATITUDE"),
             brief_longitude=_str("BRIEF_LONGITUDE"),

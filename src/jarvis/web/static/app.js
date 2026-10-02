@@ -709,6 +709,7 @@ async function loadPlan() {
   if (!list.childElementCount) list.innerHTML = '<p class="muted">Nothing scheduled. Try “remind me to call Mum tomorrow at 6pm” or “turn off the hall light at 11pm”.</p>';
   renderHistory(data.history || []);
   loadDeliveries();
+  loadDeadlines();
   await loadEvents();
 }
 async function loadEvents() {
@@ -721,6 +722,43 @@ async function loadEvents() {
   if (!data.items.length && !$("#action-proposals").childElementCount) list.innerHTML = '<p class="muted">Nothing waiting. Events found in your email and home actions you ask for appear here.</p>';
   await loadMuted();
 }
+/* ---------- renewals, deadlines and replies you're waiting for ---------- */
+async function loadDeadlines() {
+  const data = await (await api("/api/deadlines")).json();
+  $("#deadline-list").innerHTML = data.deadlines.map((d) => `
+    <div class="card deadline ${d.days <= 3 ? "soon" : ""}" data-deadline="${d.id}">
+      <div><strong>${esc(d.icon)} ${esc(d.label)} ${esc(d.when)}</strong> <span class="muted">(${esc(d.away)})</span></div>
+      <div>${esc(d.title)} <span class="muted">· ${esc(d.org)}</span></div>
+      ${d.evidence ? `<div class="muted small">“${esc(d.evidence)}”</div>` : ""}
+      <div class="row-actions">
+        ${d.email_url ? `<a class="button ghost" href="${esc(d.email_url)}">Email</a>` : ""}
+        <button class="ghost" data-deadline-status="done">Done</button>
+        <button class="ghost" data-deadline-status="dismissed" title="Not a real deadline">Not this</button>
+      </div></div>`).join("")
+    || `<p class="muted">Nothing coming up. ${data.looked_back ? "" : "Jarvis reads the last year of email for renewals the first time Google is connected."}</p>`;
+  $("#waiting-list").innerHTML = data.waiting.map((w) => `
+    <div class="card deadline" data-thread="${esc(w.thread_id)}">
+      <div><strong>${esc(w.to)}</strong> — ${esc(w.subject)}</div>
+      <div class="muted small">You asked ${esc(w.sent)} · ${w.days} days ago, no reply yet</div>
+      <div class="row-actions"><a class="button ghost" href="${esc(w.email_url)}">Email</a>
+        <button class="ghost" data-waiting-dismiss title="Stop listing this one">Not waiting</button></div>
+    </div>`).join("")
+    || `<p class="muted">No unanswered questions in emails you sent (after ${data.followup_days} days).</p>`;
+}
+$("#deadline-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-deadline-status]");
+  if (!button) return;
+  const id = button.closest("[data-deadline]").dataset.deadline;
+  await api(`/api/deadlines/${id}`, { method: "POST", body: JSON.stringify({ status: button.dataset.deadlineStatus }) });
+  loadDeadlines();
+});
+$("#waiting-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-waiting-dismiss]");
+  if (!button) return;
+  await api(`/api/followups/${button.closest("[data-thread]").dataset.thread}/dismiss`, { method: "POST" });
+  loadDeadlines();
+});
+
 /* ---------- reading an email inside Jarvis (Gmail web links can't open one email on Android) ---------- */
 async function loadEmail(threadId, notePath) {
   $("#email-subject").textContent = "Loading…";

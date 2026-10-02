@@ -55,6 +55,7 @@ class Brief:
         self.notifier = notifier
         self.on_brief = None  # async callback(markdown) set by Services (posts to chat)
         self.on_evening = None  # the same for the evening preview
+        self.deadlines = None  # Deadlines, set by Services
         self.birthday_source = None
         self.deliveries = None  # Deliveries, set by Services  # async () -> list[Birthday], set by Services (Assistant.birthdays)
 
@@ -211,6 +212,13 @@ class Brief:
         replies = self.needs_reply()
         if replies:
             sections.append(("Email that may need a reply", replies))
+        if self.deadlines is not None:
+            coming = self.deadlines.lines(14)
+            if coming:
+                sections.append(("Renewals and deadlines", coming))
+            waiting = self.deadlines.waiting_lines()
+            if waiting:
+                sections.append(("Waiting on a reply", waiting[:5]))
         new_mail = self.db.one("SELECT COUNT(*) n FROM emails WHERE bulk = 0 AND outgoing = 0 AND ts > ?",
                                (time.time() - 86400,))["n"]
         if new_mail:
@@ -263,6 +271,10 @@ class Brief:
             sections.append(("Reminders and home", [
                 f"{datetime.fromtimestamp(r['due'], tz):%H:%M} — {'🏠 ' if r['kind'] == 'ha' else ''}{r['text']}"
                 + (" (needs your OK)" if r["status"] == "proposed" else "") for r in due]))
+        if self.deadlines is not None:
+            due = [d for d in self.deadlines.upcoming(1) if d["days"] == 1]
+            if due:
+                sections.append(("Due tomorrow", [f"{d['icon']} {d['label']}: {d['title']} · {d['org']}" for d in due]))
         if self.deliveries is not None:
             parcels = self.deliveries.summary_lines(on_day=tomorrow.isoformat())
             if parcels:
