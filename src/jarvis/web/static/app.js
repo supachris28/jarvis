@@ -176,6 +176,7 @@ function addMessage(role, text = "", trace = "") {
   el.innerHTML = `<div class="body">${role === "user" ? `<p>${esc(text)}</p>` : markdown(text)}</div>`;
   if (role === "assistant" && text) addSpeakButton(el, text);
   if (trace && role !== "user") addDetailsButton(el, trace);
+  if (role === "assistant" && text) addReportButton(el, trace, text);
   if (role === "user") { el.dataset.text = text; el.title = "Tap to edit and resend"; }
   $("#messages").appendChild(el);
   if (chatVisible()) el.scrollIntoView({ block: "end" }); else chatNeedsScroll = true;
@@ -299,6 +300,7 @@ $("#chat-form").addEventListener("submit", async (event) => {
   if (meta && meta.route === "web" && sources.length) linkCitations(body, sources);
   if (text.trim()) addSpeakButton(bubble, text);
   if (traceId) addDetailsButton(bubble, traceId);
+  if (text.trim()) addReportButton(bubble, traceId, text, meta && meta.route);
   $("#send").disabled = false;
   if ((voiceOn() || (meta && meta.speak)) && text.trim()) speak(text, bubble.querySelector("button.speak"));  // "read me …" speaks
 });
@@ -959,18 +961,81 @@ function addDetailsButton(el, traceId) {
   foot.appendChild(button);
 }
 
+/* ---------- "that was wrong" ---------- */
+function addReportButton(el, trace, answer, route = "") {
+  let foot = el.querySelector(":scope > .foot");
+  if (!foot) { foot = document.createElement("div"); foot.className = "foot"; el.appendChild(foot); }
+  const button = document.createElement("button");
+  button.className = "speak"; button.type = "button"; button.textContent = "👎";
+  button.title = "This answer was wrong — report it";
+  button.setAttribute("aria-label", "Report a wrong answer");
+  button.addEventListener("click", () => {
+    let form = el.querySelector(":scope > .report-form");
+    if (form) { form.remove(); return; }
+    form = document.createElement("form");
+    form.className = "report-form card";
+    form.innerHTML = `<label class="small"><span>What was wrong? <span class="muted">(optional)</span></span>
+        <textarea rows="2" placeholder="e.g. included Wednesday's events; times were an hour out"></textarea></label>
+      <div class="row-actions"><button type="submit">Report</button><button type="button" class="ghost">Cancel</button></div>`;
+    form.querySelector("button.ghost").addEventListener("click", () => form.remove());
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const note = form.querySelector("textarea").value.trim();
+      let asked = el.previousElementSibling;
+      while (asked && !asked.classList.contains("user")) asked = asked.previousElementSibling;
+      const prompt = asked ? asked.dataset.text || "" : "";
+      const r = await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace, answer, route, note, prompt }) });
+      if (!r.ok) { form.insertAdjacentHTML("beforeend", '<p class="error small">Couldn\'t save the report.</p>'); return; }
+      form.remove();
+      button.textContent = "👎 Reported"; button.disabled = true;
+    });
+    el.appendChild(form);
+    form.querySelector("textarea").focus();
+  });
+  foot.appendChild(button);
+}
+function reportHtml(f) {
+  const status = { open: "", fixed: '<span class="tag">fixed</span>', dismissed: '<span class="tag">dismissed</span>' }[f.status] || "";
+  return `<div class="card report ${esc(f.status)}" data-report="${f.id}">
+    <div class="muted small">${when(f.ts)} · v${esc(f.version)}${f.route ? " · " + esc(f.route) : ""} ${status}</div>
+    ${f.prompt ? `<p><strong>${esc(f.prompt)}</strong></p>` : ""}
+    ${f.note ? `<p>📝 ${esc(f.note)}</p>` : ""}
+    <details><summary class="small">Answer given</summary><div class="small">${markdown(f.answer)}</div></details>
+    <div class="row-actions">
+      ${f.trace ? `<a class="button ghost" href="#logs?trace=${esc(f.trace)}">Logs (${f.log_count})</a>` : ""}
+      ${f.status === "open" ? '<button class="ghost" data-status="fixed">Fixed</button><button class="ghost" data-status="dismissed">Dismiss</button>'
+                            : '<button class="ghost" data-status="open">Reopen</button>'}
+    </div></div>`;
+}
+async function loadReports() {
+  const data = await (await api(`/api/feedback?status=${$("#report-status").value}`)).json();
+  const open = data.counts.open || 0;
+  $("#log-list").innerHTML = `<p class="muted small">${open} open report(s). Download them and share the file when
+      asking for fixes — each one includes what Jarvis did.</p>` + (data.items.map(reportHtml).join("")
+    || '<p class="muted">Nothing reported. Tap 👎 under an answer that was wrong.</p>');
+  $("#log-more").classList.add("hidden");
+}
+$("#log-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-status]");
+  const card = event.target.closest("[data-report]");
+  if (!button || !card) return;
+  await api(`/api/feedback/${card.dataset.report}`, { method: "POST", body: JSON.stringify({ status: button.dataset.status }) });
+  loadReports();
+});
+
 function setLogMode(mode) {
   logMode = mode;
   document.querySelectorAll("[data-logmode]").forEach((b) => b.classList.toggle("active", b.dataset.logmode === mode));
-  const entries = mode === "entries";
+  const entries = mode === "entries", reports = mode === "reports";
   ["#log-level", "#log-source", "#log-search"].forEach((s) => $(s).classList.toggle("hidden", !entries));
-  ["#trace-kind", "#problems-wrap"].forEach((s) => $(s).classList.toggle("hidden", entries));
+  ["#trace-kind", "#problems-wrap"].forEach((s) => $(s).classList.toggle("hidden", entries || reports));
+  ["#report-status", "#export-reports"].forEach((s) => $(s).classList.toggle("hidden", !reports));
 }
 document.querySelectorAll("[data-logmode]").forEach((b) => b.addEventListener("click", () => {
   setLogMode(b.dataset.logmode);
   if (location.hash.includes("trace=")) location.hash = "#logs"; else loadLogs();
 }));
-["#trace-kind", "#trace-problems", "#log-level", "#log-source"].forEach((s) => $(s).addEventListener("change", () => loadLogs()));
+["#trace-kind", "#trace-problems", "#log-level", "#log-source", "#report-status"].forEach((s) => $(s).addEventListener("change", () => loadLogs()));
 let searchTimer = null;
 $("#log-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadLogs(), 350); });
 
@@ -1001,6 +1066,7 @@ async function loadLogs(more = false) {
     $("#log-more").classList.add("hidden");
     return;
   }
+  if (logMode === "reports") { await loadReports(); return; }
   if (logMode === "traces") {
     const q = new URLSearchParams({ kind: $("#trace-kind").value, problems: $("#trace-problems").checked ? "1" : "" });
     const traces = await (await api(`/api/diag/traces?${q}`)).json();
@@ -1033,6 +1099,7 @@ async function download(url) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 $("#export-logs").addEventListener("click", () => download("/api/diag/export?hours=24"));
+$("#export-reports").addEventListener("click", () => download(`/api/feedback/export?status=${$("#report-status").value}`));
 document.addEventListener("click", (event) => {
   const id = event.target.dataset && event.target.dataset.exportTrace;
   if (id) download(`/api/diag/export?trace=${encodeURIComponent(id)}`);

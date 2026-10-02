@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..config import Settings
 from ..db import Database
-from ..extract.events import parse_iso
+from ..extract.events import local_iso, parse_iso
 from ..google.calendar import Calendar
 from ..notify import Notifier
 from ..vault.markdown import link, one_line, safe_name
@@ -27,6 +27,7 @@ class CalendarPipeline:
 
     async def run(self) -> dict:
         now = datetime.now(timezone.utc)
+        self.localise_stored()
         first = self.db.get("calendar.last_run") is None
         past = timedelta(days=self.settings.backfill_days if first else 2)
         changed = 0
@@ -39,13 +40,30 @@ class CalendarPipeline:
         self.db.set("calendar.last_run", now.timestamp())
         return {"seen": seen, "changed": changed, "backfill": first}
 
+    def localise_stored(self) -> int:
+        """One-off: events stored before v0.9.12 kept Google's UTC text, so their [:10] could be the wrong day."""
+        if self.db.get("events.localised.v1"):
+            return 0
+        tz = self.settings.tz
+        changed = 0
+        for row in self.db.all("SELECT event_id, start, end FROM events"):
+            start, end = local_iso(row["start"], tz), local_iso(row["end"], tz)
+            if (start, end) != (row["start"], row["end"]):
+                self.db.execute("UPDATE events SET start = ?, end = ? WHERE event_id = ?",
+                                (start, end, row["event_id"]))
+                changed += 1
+        self.db.set("events.localised.v1", True)
+        return changed
+
     def upsert(self, event: dict) -> bool:
+        tz = self.settings.tz
+        # stored in local time, so the day in the text is the local day (late-night events, BST ↔ GMT)
+        event = event | {"start": local_iso(event["start"], tz), "end": local_iso(event["end"], tz)}
         existing = self.db.one("SELECT * FROM events WHERE event_id = ?", (event["event_id"],))
         if existing is not None and existing["updated"] == event["updated"]:
             return False
         if existing is None and event["status"] == "cancelled":
             return False
-        tz = self.settings.tz
         start = parse_iso(event["start"], tz) if event["start"] else datetime.now(tz)
         local_start = start.astimezone(tz)
         if existing is None:

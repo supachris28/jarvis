@@ -226,6 +226,7 @@ You need Docker Desktop on the PC.
 ### Morning brief
 
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
+- Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
 - The brief covers:
   - the weather;
   - today's events, and tomorrow's first one;

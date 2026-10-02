@@ -119,6 +119,7 @@ Jobs run inside the container:
 | scheduled | 30 s | Sends due reminders and runs confirmed Home Assistant actions, then reschedules repeats |
 | ticks | 5 min | Cancels items you ticked in `Jarvis/Reminders.md` |
 | brief | 1 min | Sends the morning brief once a day at `BRIEF_TIME` |
+| evening | 1 min | Sends the evening preview of tomorrow once a day at `EVENING_TIME` |
 | saves | 1 min | Sends an ntfy summary of what was saved to the vault (at most every `NOTIFY_VAULT_SAVES_MINUTES`) |
 | digest | 5 min | Sends notifications held during quiet hours as one digest |
 

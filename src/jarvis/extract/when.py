@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from .event_text import _find_date
 
@@ -144,7 +144,9 @@ def parse_when(text: str, now: datetime) -> When:
     rest = re.sub(r"\s+", " ", remaining).strip(" ,.;:-")
     explicit = clock is not None
     if relative is not None:
-        return When(now + relative, repeat, rest, True)
+        if relative < timedelta(days=1):  # "in 2 hours" on the night the clocks change is still 2 real hours
+            return When((now.astimezone(timezone.utc) + relative).astimezone(now.tzinfo), repeat, rest, True)
+        return When(now + relative, repeat, rest, True)  # "in 3 days" keeps the clock time
     if weekday_repeat is not None:
         ahead = (weekday_repeat - now.weekday()) % 7
         target_date = now.date() + timedelta(days=ahead)

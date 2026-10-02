@@ -704,12 +704,16 @@ class Deliveries:
         return {"active": active, "checked": checked, "changed": changed, "notified": sent, "items_named": named}
 
     # ------------------------------------------------------------------ for chat answers and the brief
-    def summary_lines(self, only_today: bool = False) -> list[str]:
+    def summary_lines(self, only_today: bool = False, on_day: str = "") -> list[str]:
+        """Active parcels; `only_today` keeps those arriving today (or needing attention), `on_day` (ISO date)
+        those expected that day."""
         lines = []
         today = datetime.now(self.settings.tz).date().isoformat()
         for item in self.active():
             if only_today and not (item["status"] == "out_for_delivery" or item["expected"] == today
                                    or item["status"] in {"attempted", "delayed"}):
+                continue
+            if on_day and (item["expected"] != on_day or item["status"] == "delivered"):
                 continue
             who = item["name"] + (f" ({item['retailer']})" if item["retailer"] and item["retailer"] != item["name"] else "")
             bits = [item["label"] if item["status"] != "delivered" else f"Delivered {item['delivered_text']}"]

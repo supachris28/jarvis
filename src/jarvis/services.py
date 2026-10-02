@@ -123,6 +123,7 @@ class Services:
         self.scheduler = Scheduler(settings, self.db, self.ha, self.notifier, self.vault)
         self.brief = Brief(settings, self.db, self.ha, self.scheduler, self.llm, self.notifier)
         self.brief.on_brief = self.post_brief
+        self.brief.on_evening = self.post_evening
         self.writer.on_saved = self.announce_saves
         self.assistant = Assistant(settings, self.db, self.llm, self.vault, self.writer, self.gmail,
                                    self.calendar, self.drive, self.events, self.scheduler, self.brief, self.ha,
@@ -145,6 +146,7 @@ class Services:
             Job("scheduled", 30, self.scheduler.run_due, "Your reminders and scheduled home actions"),
             Job("ticks", 300, self.scheduler.sync_ticks, "Cancel items ticked in Jarvis/Reminders.md"),
             Job("brief", 60, self.brief.run, f"Morning brief at {settings.brief_time}"),
+            Job("evening", 60, self.brief.run_evening, f"Evening preview of tomorrow at {settings.evening_time or 'off'}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
             Job("deliveries", 3600, self._deliveries_job, "Follow tracking links of active deliveries"),
             Job("vault", 60, self.writer.flush, "Write queued notes to Obsidian"),
@@ -186,6 +188,12 @@ class Services:
 
     async def post_brief(self, text: str) -> None:
         if not self.notifier.in_chat("brief"):
+            return
+        self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
+                        (time.time(), text, diag.current_trace_id()))
+
+    async def post_evening(self, text: str) -> None:
+        if not self.notifier.in_chat("evening"):
             return
         self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
                         (time.time(), text, diag.current_trace_id()))

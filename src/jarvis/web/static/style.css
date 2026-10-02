@@ -183,3 +183,9 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .note-properties dd { margin: 0; overflow-wrap: anywhere; }
 #note-open { max-width: 100%; }
 .field { display: flex; flex-direction: column; gap: .3rem; }
+
+/* reporting a wrong answer */
+.report-form { margin-top: .4rem; padding: .6rem; display: flex; flex-direction: column; gap: .4rem; }
+.report-form label { display: flex; flex-direction: column; gap: .3rem; }
+.report.fixed, .report.dismissed { opacity: .7; }
+.report p { margin: .3rem 0; }

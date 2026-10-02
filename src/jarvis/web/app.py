@@ -479,6 +479,84 @@ async def diag_export(request: Request) -> Response:
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+async def feedback_add(request: Request) -> Response:
+    """'That was wrong': keep the question, the answer, a note and what Jarvis did (its log entries)."""
+    services: Services = request.app.state.services
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    trace = str(body.get("trace", ""))[:64]
+    answer = str(body.get("answer", ""))[:8000]
+    prompt = ""
+    if trace:
+        row = services.db.one("SELECT content FROM chat_messages WHERE trace = ? AND role = 'user' ORDER BY id LIMIT 1",
+                              (trace,))
+        prompt = row["content"] if row else ""
+        if not answer:
+            row = services.db.one("SELECT content FROM chat_messages WHERE trace = ? AND role != 'user' "
+                                  "ORDER BY id DESC LIMIT 1", (trace,))
+            answer = row["content"] if row else ""
+    prompt = prompt or str(body.get("prompt", ""))  # replies that weren't saved (e.g. errors): the app sends it
+    if not (trace or answer):
+        return JSONResponse({"error": "nothing to report"}, status_code=400)
+    logs = [_log_row(r) for r in services.db.all("SELECT * FROM logs WHERE trace = ? ORDER BY id LIMIT 400", (trace,))] \
+        if trace else []
+    cursor = services.db.execute(
+        "INSERT INTO feedback (ts, trace, prompt, answer, route, note, version, logs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (time.time(), trace, prompt[:4000], answer, str(body.get("route", ""))[:40], str(body.get("note", ""))[:2000],
+         __version__, json.dumps(logs, ensure_ascii=False, default=str)))
+    diag.event("feedback", f"answer reported as wrong: {prompt[:80] or answer[:80]}", note=str(body.get("note", ""))[:200])
+    return JSONResponse({"id": cursor.lastrowid})
+
+
+def _feedback_rows(services: Services, status: str = "", with_logs: bool = False) -> list[dict]:
+    rows = services.db.all("SELECT * FROM feedback" + (" WHERE status = ?" if status else "") + " ORDER BY id DESC "
+                           "LIMIT 200", (status,) if status else ())
+    items = []
+    for row in rows:
+        item = dict(row)
+        logs = json.loads(item.pop("logs") or "[]")
+        if with_logs:
+            item["logs"] = logs
+        else:
+            item["log_count"] = len(logs)
+        items.append(item)
+    return items
+
+
+async def feedback_list(request: Request) -> Response:
+    services: Services = request.app.state.services
+    status = request.query_params.get("status", "")
+    status = status if status in ("open", "fixed", "dismissed") else ""
+    counts = {r["status"]: r["n"] for r in services.db.all("SELECT status, COUNT(*) n FROM feedback GROUP BY status")}
+    return JSONResponse({"items": _feedback_rows(services, status), "counts": counts})
+
+
+async def feedback_update(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    status = str((body or {}).get("status", ""))
+    if status not in ("open", "fixed", "dismissed"):
+        return JSONResponse({"error": "status must be open, fixed or dismissed"}, status_code=400)
+    request.app.state.services.db.execute("UPDATE feedback SET status = ? WHERE id = ?",
+                                          (status, request.path_params["id"]))
+    return JSONResponse({"ok": True})
+
+
+async def feedback_export(request: Request) -> Response:
+    """Every open report with its log entries, as one file to hand over for fixing."""
+    services: Services = request.app.state.services
+    body = json.dumps({"version": __version__, "exported": time.time(),
+                       "reports": _feedback_rows(services, request.query_params.get("status", "open"), True)},
+                      ensure_ascii=False, indent=1, default=str)
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="jarvis-reports-{time.strftime("%Y%m%d")}.json"'})
+
+
 async def tts(request: Request) -> Response:
     services: Services = request.app.state.services
     try:
@@ -654,6 +732,10 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/notifications/test", test_notification, methods=["POST"]),
             Route("/api/vault/changes", vault_changes),
             Route("/api/vault/note", vault_note),
+            Route("/api/feedback", feedback_add, methods=["POST"]),
+            Route("/api/feedback", feedback_list),
+            Route("/api/feedback/export", feedback_export),
+            Route("/api/feedback/{id:int}", feedback_update, methods=["POST"]),
             Route("/api/vault/revert/{id:int}", vault_revert, methods=["POST"]),
             Route("/auth/google/start", google_start),
             Route("/auth/google/callback", google_callback),

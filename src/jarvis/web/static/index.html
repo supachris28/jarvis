@@ -172,6 +172,7 @@
         <div class="segmented" role="tablist">
           <button data-logmode="traces" class="active" role="tab">Activity</button>
           <button data-logmode="entries" role="tab">All entries</button>
+          <button data-logmode="reports" role="tab">Reported</button>
         </div>
         <div class="filters">
           <select id="trace-kind" aria-label="Kind">
@@ -185,6 +186,11 @@
           </select>
           <select id="log-source" aria-label="Source" class="hidden"><option value="">All sources</option></select>
           <input id="log-search" type="search" placeholder="Search…" class="hidden">
+          <select id="report-status" aria-label="Which reports" class="hidden">
+            <option value="open">Open</option><option value="fixed">Fixed</option>
+            <option value="dismissed">Dismissed</option><option value="">All</option>
+          </select>
+          <button id="export-reports" class="ghost hidden">Download reports</button>
         </div>
         <div id="log-list" class="list"></div>
         <button id="log-more" class="ghost hidden">Older entries</button>

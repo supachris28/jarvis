@@ -222,6 +222,18 @@ CREATE TABLE IF NOT EXISTS logs (
     error TEXT NOT NULL DEFAULT '',
     duration_ms REAL
 );
+CREATE TABLE IF NOT EXISTS feedback (      -- answers Chris marked as wrong, to review and turn into fixes/tests
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    trace TEXT NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL DEFAULT '',
+    answer TEXT NOT NULL DEFAULT '',
+    route TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '',
+    logs TEXT NOT NULL DEFAULT '[]',       -- the trace's log entries, kept after the logs themselves expire
+    status TEXT NOT NULL DEFAULT 'open'    -- open | fixed | dismissed
+);
 CREATE INDEX IF NOT EXISTS events_start ON events(start);
 CREATE INDEX IF NOT EXISTS event_proposals_start ON event_proposals(start);
 CREATE INDEX IF NOT EXISTS event_proposals_status ON event_proposals(status);

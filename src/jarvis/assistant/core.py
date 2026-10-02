@@ -48,6 +48,10 @@ log = logging.getLogger(__name__)
 BRIEF = re.compile(r"\b(morning brief|daily brief|brief me|my brief|good morning|what'?s my day|plan for today)\b",
                    re.IGNORECASE)
 
+EVENING = re.compile(r"\b(evening (?:brief|preview)|tomorrow'?s (?:brief|preview)|preview (?:of )?tomorrow|"
+                     r"prepare (?:me )?for tomorrow|ready for tomorrow|what do i need (?:for|to know about) tomorrow)\b",
+                     re.IGNORECASE)
+
 PERSONA = (
     "You are Jarvis, Chris's personal assistant. Be concise, warm and practical. "
     "Use only facts you are given or general knowledge; say so when the data does not answer the question. "
@@ -258,6 +262,13 @@ class Assistant:
         if self.scheduler is not None and reminder_text(prompt) is not None:
             async for event in self.handle_reminder(prompt):
                 yield event
+            return
+        if self.brief is not None and EVENING.search(prompt):
+            yield {"type": "meta", "route": "brief"}
+            text = await self.brief.build_evening()
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
             return
         if self.brief is not None and BRIEF.search(prompt):
             async for event in self.handle_brief(prompt):
@@ -1098,6 +1109,7 @@ class Assistant:
         except GoogleError as error:
             text = f"I couldn't read your calendar: {error}"
             yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
             yield {"type": "done"}
             return
         diag.event("calendar", f"{len(events)} event(s) {label or first.isoformat()}", days=(after_last - first).days)

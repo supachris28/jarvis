@@ -239,6 +239,13 @@ class IntegrationTests(IntegrationBase):
             event(4, "Musical theatre", utc(tomorrow + td(days=1), 10, 30), utc(tomorrow + td(days=1), 11, 30)),
         ])
         self.run_async(s.calendar_pipeline.run())
+        stored = s.db.one("SELECT start FROM events WHERE event_id = 'agenda2'")["start"]
+        self.assertTrue(stored.startswith(f"{tomorrow.isoformat()}T06:00:00"), f"stored in local time: {stored}")
+        # rows stored by older versions (Google's UTC text) are converted once
+        s.db.execute("UPDATE events SET start = ? WHERE event_id = 'agenda2'", (utc(tomorrow, 6),))
+        s.db.set("events.localised.v1", False)
+        self.assertEqual(s.calendar_pipeline.localise_stored(), 1)
+        self.assertEqual(s.db.one("SELECT start FROM events WHERE event_id = 'agenda2'")["start"], stored)
         model_calls = len(self.ollama.requests)
 
         async def ask(text):
@@ -351,6 +358,23 @@ class IntegrationTests(IntegrationBase):
 
             events, text = chat("Remember that Sam Jones is allergic to peanuts")
             self.assertIn("Saved “Sam Jones is allergic to peanuts”", text)
+            # 👎: the report keeps the question, the answer, a note and the trace's log entries
+            trace = next(e["id"] for e in events if e["type"] == "trace")
+            self.assertEqual(client.post("/api/feedback", json={}, headers=h).status_code, 400)
+            report = client.post("/api/feedback", json={"trace": trace, "route": "remember",
+                                                         "note": "wrong person"}, headers=h).json()
+            listed = client.get("/api/feedback", headers=h).json()
+            self.assertEqual(listed["counts"], {"open": 1})
+            item = listed["items"][0]
+            self.assertEqual((item["id"], item["note"]), (report["id"], "wrong person"))
+            self.assertEqual(item["prompt"], "Remember that Sam Jones is allergic to peanuts")
+            self.assertIn("Saved", item["answer"])
+            self.assertGreater(item["log_count"], 0)
+            self.services.db.execute("DELETE FROM logs")  # logs expire; the report keeps its copy
+            exported = json.loads(client.get("/api/feedback/export", headers=h).text)
+            self.assertTrue(exported["reports"][0]["logs"])
+            client.post(f"/api/feedback/{report['id']}", json={"status": "fixed"}, headers=h)
+            self.assertEqual(client.get("/api/feedback?status=open", headers=h).json()["items"], [])
             self.assertIn("What I saved", text)
             self.assertIn("Inbox/", text)
             inbox = [p for p in self.obsidian.files if p.startswith("Inbox/")]

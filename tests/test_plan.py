@@ -311,6 +311,44 @@ class PlanTests(IntegrationBase):
         self.assertEqual(len(self.home.calls), calls)
         self.assertIn("missed", s.scheduler.get(repeat["id"])["result"])
 
+    def test_evening_preview(self):
+        s = self.services
+        self.settings.brief_ha_entities = ["sensor.bin_collection"]
+        tomorrow = datetime.now(TZ).date() + timedelta(days=1)
+
+        def add(event_id, summary, hour, minute, description=""):
+            start = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hour, minute, tzinfo=TZ).isoformat()
+            s.db.execute("INSERT INTO events (event_id, calendar_id, path, summary, start, end, all_day, location, "
+                         "description, attendees, status, updated, html_link) VALUES (?, 'primary', ?, ?, ?, ?, 0, '', "
+                         "?, '[]', 'confirmed', '1', '')",
+                         (event_id, f"Sources/Calendar/{event_id}.md", summary, start, start, description))
+        add("ev1", "Bowling", 18, 0, "Lane 4\nBooking reference: 203BIR-NGC5GHR\nSee you soon")
+        add("ev2", "Amen Corner", 7, 0)
+        s.db.execute("INSERT INTO scheduled (created, kind, text, due, repeat, payload, status, source) "
+                     "VALUES (?, 'reminder', 'take the recycling', ?, '', '{}', 'scheduled', 'chat')",
+                     (time.time(), datetime(tomorrow.year, tomorrow.month, tomorrow.day, 8, 0, tzinfo=TZ).timestamp()))
+        text = self.run_async(s.brief.build_evening())
+        self.assertTrue(text.startswith(f"**Tomorrow — {tomorrow:%A %d %B}**"))
+        self.assertIn("- ⏰ Early start — 07:00 — [[Sources/Calendar/ev2|Amen Corner]]", text)
+        self.assertIn("- Bowling: Booking reference: 203BIR-NGC5GHR", text)
+        self.assertNotIn("See you soon", text)
+        self.assertIn("take the recycling", text)
+        self.assertIn("Bin collection: Recycling", text)
+        # sent once a day, posted in the chat; "off" switches it off; ask for it any time in chat
+        self.assertEqual(self.run_async(s.brief.run_evening(force=True)), "sent")
+        self.assertTrue(s.db.one("SELECT 1 FROM chat_messages WHERE role = 'activity' AND content LIKE '**Tomorrow —%'"))
+        self.assertTrue(s.db.one("SELECT 1 FROM notifications WHERE title LIKE 'Tomorrow —%'"))
+        self.settings.evening_time = "00:00"
+        self.assertFalse(s.brief.evening_due(), "already sent today")
+        self.settings.evening_time = "off"
+        s.db.set(f"evening.sent.{datetime.now(TZ):%Y-%m-%d}", False)
+        self.assertFalse(s.brief.evening_due())
+
+        async def ask(text):
+            return [e async for e in s.assistant.handle(text)]
+        events = self.run_async(ask("evening preview please"))
+        self.assertIn("Booking reference", "".join(e.get("text", "") for e in events if e["type"] == "token"))
+
     def test_brief(self):
         s = self.services
         self.settings.brief_ha_entities = ["sensor.bin_collection"]

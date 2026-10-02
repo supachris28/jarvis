@@ -92,6 +92,7 @@ class Settings:
     ha_verify_tls: bool = True
 
     brief_time: str = "07:30"
+    evening_time: str = "21:00"         # evening preview of tomorrow; "" or "off" to switch it off
     brief_latitude: str = ""
     brief_longitude: str = ""
     brief_place: str = ""
@@ -187,6 +188,7 @@ class Settings:
             ha_token=_str("HA_TOKEN"),
             ha_verify_tls=_bool("HA_VERIFY_TLS", True),
             brief_time=_str("BRIEF_TIME", "07:30"),
+            evening_time=_str("EVENING_TIME", "21:00"),
             brief_latitude=_str("BRIEF_LATITUDE"),
             brief_longitude=_str("BRIEF_LONGITUDE"),
             brief_place=_str("BRIEF_PLACE"),

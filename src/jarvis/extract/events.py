@@ -50,6 +50,18 @@ def parse_iso(value: str, tz: tzinfo) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
 
 
+def local_iso(value: str, tz: tzinfo) -> str:
+    """A Google time ('…Z', or another zone's offset) as local ISO text: '2026-10-02T07:00:00+01:00'.
+    Dates (all-day) are kept as they are. Local text means the date in it ([:10]) is the local day."""
+    value = (value or "").strip()
+    if len(value) <= 10:
+        return value
+    try:
+        return parse_iso(value, tz).astimezone(tz).isoformat()
+    except ValueError:
+        return value
+
+
 def _zone(name: str | None, default: tzinfo) -> tzinfo:
     if not name:
         return default
