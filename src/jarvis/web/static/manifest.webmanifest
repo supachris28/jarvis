@@ -6,6 +6,19 @@
   "display": "standalone",
   "background_color": "#101418",
   "theme_color": "#101418",
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": { "title": "share_title", "text": "share_text", "url": "share_url" }
+  },
+  "shortcuts": [
+    { "name": "What's on today", "short_name": "Today", "url": "/?ask=What%27s%20on%20today%3F",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }] },
+    { "name": "What's on tomorrow", "short_name": "Tomorrow", "url": "/?ask=Evening%20preview",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Plan", "short_name": "Plan", "url": "/#plan",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }] }
+  ],
   "icons": [
     { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },

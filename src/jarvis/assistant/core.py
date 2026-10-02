@@ -39,7 +39,8 @@ from ..websearch import WEB_PROMPT, WebError, WebSearch
 from ..vault.files import STOPWORDS
 from ..bible import BibleError, find_reference, passage as bible_passage
 from ..extract.events import parse_iso
-from .agenda import agenda_text, asked_days, events_between, is_agenda_question
+from .agenda import (FREE_QUESTION, agenda_text, asked_days, events_between, free_slots, is_agenda_question,
+                     matching_events, next_question, when_text)
 from .compound import annotation_parts, detail_line, link_clauses, split_request
 from .facts import BIRTHDAY_QUESTION, Birthday, birthday_context, collect_birthdays
 
@@ -318,6 +319,14 @@ class Assistant:
             async for event in self.handle_agenda(prompt):
                 yield event
             return
+        asked = next_question(prompt) if self.calendar is not None else None
+        if asked:
+            answered = False
+            async for event in self.handle_when(prompt, *asked):
+                answered = True
+                yield event
+            if answered:
+                return
         web_query = explicit_web(prompt) if self.web is not None and self.web.enabled else None
         people = self.match_people(prompt, await self.people_index())
         if web_query:
@@ -1098,6 +1107,45 @@ class Assistant:
                                                      datetime.combine(after_last, dtime(0), tz))
         return events_between(events, first, after_last, tz)
 
+    async def handle_when(self, prompt: str, what: str, past: bool) -> AsyncIterator[dict]:
+        """'When is the dentist?' — the next (or last) matching calendar events, by script. Yields nothing when
+        no event matches, so the question goes on to the normal routing (email, notes…)."""
+        tz = self.settings.tz
+        now = datetime.now(tz)
+        today = now.date()
+        first, after_last = (today - timedelta(days=365), today + timedelta(days=1)) if past else \
+            (today, today + timedelta(days=365))
+        try:
+            # the synced copy first (no API call); Google's search covers the rest of the year below
+            events = await self.calendar_events(today, today + timedelta(days=55)) if not past else []
+        except GoogleError:
+            events = []
+        found = matching_events(events, what)
+        if not found:  # beyond the synced window (or in the past): ask Google to search the titles
+            searched: list[dict] = []
+            for calendar_id in self.settings.google_calendar_ids:
+                try:
+                    searched += await self.calendar.events(
+                        calendar_id, datetime.combine(first, dtime(0), tz), datetime.combine(after_last, dtime(0), tz),
+                        query=what, limit=50)
+                except GoogleError as error:
+                    diag.debug("calendar", f"search failed: {error}")
+            found = matching_events(events_between(searched, first, after_last, tz), what)
+        if past:
+            found = [e for e in found if e["local_start"] < now][::-1]
+        else:
+            found = [e for e in found if e["local_end"] > now]
+        diag.event("calendar", f"when: “{what}” → {len(found)} match(es)", past=past)
+        if not found:
+            return
+        yield {"type": "meta", "route": "calendar", "query": what, "model": True}
+        text = when_text(found, what, past, today)
+        yield {"type": "sources", "items": [{"label": f"{e['local_start']:%a %d %b} {e.get('summary', '')}",
+                                             "url": e.get("html_link") or ""} for e in found[:4] if e.get("html_link")]}
+        yield {"type": "token", "text": text}
+        self.save_turn(prompt, text)
+        yield {"type": "done"}
+
     async def handle_agenda(self, prompt: str) -> AsyncIterator[dict]:
         """What's on for a day or a few days — listed by script, in local time (no model call)."""
         today = datetime.now(self.settings.tz).date()
@@ -1114,6 +1162,10 @@ class Assistant:
             return
         diag.event("calendar", f"{len(events)} event(s) {label or first.isoformat()}", days=(after_last - first).days)
         text = agenda_text(events, first, after_last, label, today)
+        if FREE_QUESTION.search(prompt) and (after_last - first).days == 1:
+            slots = free_slots(events, first, self.settings.tz)
+            text += "\n\n**Free**" + ("\n" + "\n".join(f"- {s}" for s in slots) if slots else
+                                        "\n- No gaps of 30 minutes or more between 08:00 and 22:00.")
         yield {"type": "sources", "items": [
             {"label": f"{e['local_start']:%a %d %b}{'' if e['all_day'] else e['local_start'].strftime(' %H:%M')} "
                       f"{e.get('summary') or ''}".strip(), "url": e.get("html_link") or ""}

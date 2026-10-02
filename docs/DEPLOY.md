@@ -227,6 +227,24 @@ You need Docker Desktop on the PC.
 
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
 - Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
+
+### Backups
+
+Every night at `BACKUP_TIME` (default 03:15, `off` to disable) Jarvis copies its database — reminders, deliveries,
+chat, settings, history, reported answers — while running, compresses it, keeps the last 7 in `/data/backups` and,
+when `NEXTCLOUD_*` is set, uploads it to the Nextcloud folder `BACKUP_DIR` (default `Backups/Jarvis`; never inside
+the vault). Nextcloud keeps one per weekday plus one per month. Sign-in sessions and the 2FA secret are left out;
+the Google token file is not included. Status → Background jobs → backup → Run makes one now.
+
+To restore: stop the container, `gunzip -c jarvis-Mon.sqlite3.gz > /data/jarvis.sqlite3` (into the data volume),
+start it, sign in with your password, set up 2FA again if you use it, and reconnect Google if asked.
+
+### Sharing to Jarvis and shortcuts (Android)
+
+Once installed as an app, Jarvis appears in Android's share menu: share a WhatsApp message, a link or text and
+choose Add to calendar, Remember, Track parcel (for tracking links/numbers) or Ask about it. (Images aren't
+supported yet.) Long-press the app icon for shortcuts: What's on today, What's on tomorrow and Plan. Reinstalling
+the app may be needed once for Android to pick up the share menu entry.
 - The brief covers:
   - the weather;
   - today's events, and tomorrow's first one;

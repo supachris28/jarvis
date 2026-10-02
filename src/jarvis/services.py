@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from .assistant.core import Assistant
+from .backup import Backup
 from .config import Settings
 from . import diag
 from .db import Database
@@ -94,6 +95,16 @@ class Services:
                                          settings.nextcloud_verify_tls)
             self.vault = FileVault(settings.vault_path, self.db, settings.vault_file_mode, writer=writer)
         self.writer = VaultWriter(self.db, self.vault, settings.tz)
+        backup_to = settings.backup_dir.strip("/")
+        uploader = None
+        if settings.nextcloud_url and settings.nextcloud_user and settings.nextcloud_app_password and backup_to:
+            vault_dir = settings.nextcloud_vault_dir.strip("/")
+            if backup_to == vault_dir or backup_to.startswith(vault_dir + "/"):
+                diag.warning("backup", f"BACKUP_DIR {backup_to} is inside the vault — backups stay on the server only")
+            else:
+                uploader = NextcloudWriter(settings.nextcloud_url, settings.nextcloud_user,
+                                           settings.nextcloud_app_password, backup_to, settings.nextcloud_verify_tls)
+        self.backup = Backup(settings, self.db, uploader)
         self.oauth = GoogleOAuth(settings.google_client_id, settings.google_client_secret,
                                  settings.google_redirect_uri, settings.google_token_path)
         self.gmail = Gmail(self.oauth)
@@ -146,6 +157,8 @@ class Services:
             Job("scheduled", 30, self.scheduler.run_due, "Your reminders and scheduled home actions"),
             Job("ticks", 300, self.scheduler.sync_ticks, "Cancel items ticked in Jarvis/Reminders.md"),
             Job("brief", 60, self.brief.run, f"Morning brief at {settings.brief_time}"),
+            Job("backup", 300, lambda: self.backup.run(force=self.jobs["backup"].trigger.is_set()),
+                f"Back up Jarvis's database at {settings.backup_time or 'off'} (server + Nextcloud)"),
             Job("evening", 60, self.brief.run_evening, f"Evening preview of tomorrow at {settings.evening_time or 'off'}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
             Job("deliveries", 3600, self._deliveries_job, "Follow tracking links of active deliveries"),

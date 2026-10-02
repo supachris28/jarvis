@@ -264,6 +264,17 @@ class IntegrationTests(IntegrationBase):
         empty = today + td(days=20)
         events = self.run_async(ask(f"Do I have anything on {empty.day}/{empty.month}/{empty.year}?"))
         self.assertIn("Nothing in your calendar on", "".join(e.get("text", "") for e in events if e["type"] == "token"))
+        # "when is …?" finds the next matching event by script; free time is worked out for "am I free" questions
+        events = self.run_async(ask("When is musical theatre?"))
+        text = "".join(e.get("text", "") for e in events if e["type"] == "token")
+        day = tomorrow + td(days=1)
+        self.assertIn(f"**Musical theatre**: {day:%a} {day.day} {day:%b} {day:%Y} at 10:30 (in 2 days)", text)
+        self.assertEqual(len(self.ollama.requests), model_calls)
+        events = self.run_async(ask("Am I free tomorrow?"))
+        text = "".join(e.get("text", "") for e in events if e["type"] == "token")
+        self.assertIn("**Free**\n- Free all day (nothing timed between 08:00 and 22:00)", text)
+        routes = [e["route"] for e in self.run_async(ask("When is the zebra parade?")) if e["type"] == "meta"]
+        self.assertNotEqual(routes[:1], ["calendar"], "no match → normal routing")
         context, _ = self.run_async(s.assistant.gather_calendar(""))
         self.assertIn(f"{tomorrow:%a %d %b %Y} 06:00", context)
         self.assertIn("times are UK local time", context)

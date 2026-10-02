@@ -155,3 +155,81 @@ def agenda_text(events: list[dict], first: date, after_last: date, label: str, t
             return f"Nothing in your calendar on {first:%A} {first.day} {first:%B}."
         return f"Nothing in your calendar {first:%a} {first.day} {first:%b} – {days[-1]:%a} {days[-1].day} {days[-1]:%b}."
     return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------- free time on a day
+FREE_QUESTION = re.compile(r"\b(free|busy|available|availability|gaps?|time for)\b", re.I)
+DAY_START, DAY_END = time(8, 0), time(22, 0)
+
+
+def free_slots(events: list[dict], day: date, tz: tzinfo, minimum: timedelta = timedelta(minutes=30)) -> list[str]:
+    """Gaps of at least `minimum` between 08:00 and 22:00 on `day`, around timed events."""
+    begin = datetime.combine(day, DAY_START, tz)
+    finish = datetime.combine(day, DAY_END, tz)
+    busy = sorted((max(e["local_start"], begin), min(e["local_end"], finish)) for e in events
+                  if not e["all_day"] and e["local_start"] < finish and e["local_end"] > begin)
+    gaps, cursor = [], begin
+    for start, end in busy:
+        if start - cursor >= minimum:
+            gaps.append((cursor, start))
+        cursor = max(cursor, end)
+    if finish - cursor >= minimum:
+        gaps.append((cursor, finish))
+    if gaps == [(begin, finish)]:
+        return ["Free all day (nothing timed between 08:00 and 22:00)."]
+    return [f"{a:%H:%M}–{b:%H:%M}" for a, b in gaps]
+
+
+# ---------------------------------------------------------------- "when is …?"
+NEXT_QUESTION = re.compile(
+    r"^\s*(?:jarvis[,\s]+)?when(?:'s|s|’s| is| are| was| were| am i| do i have| have i got| do we have)\s+"
+    r"(?:i\s+|we\s+)?(?:my\s+|the\s+|our\s+|a\s+)?(?:next\s+|last\s+)?(?P<what>.+?)\s*\??\s*$", re.I)
+NOT_EVENT = re.compile(r"\b(birthday|bday|bin|bins|sunrise|sunset|tide|delivery|parcel|package|order|"
+                       r"payday|clocks?)\b", re.I)
+FILLER = {"the", "and", "with", "for", "next", "last", "seeing", "going", "happening", "booked", "due", "meeting",
+          "appointment", "event", "what", "time", "day", "date", "then", "again"}
+
+
+def next_question(prompt: str) -> tuple[str, bool] | None:
+    """'When is the dentist?' → ('dentist', False); 'when was my last haircut' → ('haircut', True)."""
+    match = NEXT_QUESTION.match(prompt)
+    if not match or NOT_EVENT.search(prompt):
+        return None
+    what = re.sub(r"\b(on|happening|booked|due|coming up|in my calendar|in the calendar)\s*$", "", match.group("what"),
+                  flags=re.I).strip(" ?.!")
+    if not {w for w in re.findall(r"[a-z0-9]+", what.casefold()) if len(w) > 2} - FILLER:
+        return None
+    past = bool(re.search(r"\b(was|were|last)\b", prompt[:40], re.I))
+    return what, past
+
+
+def matching_events(events: list[dict], what: str) -> list[dict]:
+    """Events whose title (or location) contains every meaningful word asked about — or most of them."""
+    wanted = {w for w in re.findall(r"[a-z0-9]+", what.casefold()) if len(w) > 2} - FILLER
+    if not wanted:
+        return []
+    scored = []
+    for event in events:
+        words = set(re.findall(r"[a-z0-9]+", f"{event.get('summary', '')} {event.get('location', '')}".casefold()))
+        # "swim" finds "Swimming", "dentist" finds "Dentist's"
+        hits = sum(1 for w in wanted if any(t.startswith(w) or w.startswith(t) and len(t) > 3 for t in words))
+        if hits == len(wanted) or (len(wanted) > 2 and hits / len(wanted) >= 0.67):
+            scored.append(event)
+    return scored
+
+
+def when_text(found: list[dict], what: str, past: bool, today: date) -> str:
+    """'Dentist: Tue 13 Oct at 09:30 (in 11 days)', plus the next couple after it."""
+    lines = []
+    for event in found[:4]:
+        start = event["local_start"]
+        days = (start.date() - today).days
+        away = ("today" if days == 0 else "tomorrow" if days == 1 else "yesterday" if days == -1
+                else f"in {days} days" if days > 0 else f"{-days} days ago")
+        clock = "" if event["all_day"] else f" at {start:%H:%M}"
+        where = f" — {event['location'].strip()}" if (event.get("location") or "").strip() else ""
+        lines.append(f"**{event.get('summary') or what}**: {start:%a} {start.day} {start:%b} {start:%Y}{clock} "
+                     f"({away}){where}")
+    if len(lines) == 1:
+        return lines[0]
+    return lines[0] + "\n\n" + ("Before that:" if past else "After that:") + "\n" + "\n".join(f"- {l}" for l in lines[1:])

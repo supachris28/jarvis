@@ -92,6 +92,8 @@ class Settings:
     ha_verify_tls: bool = True
 
     brief_time: str = "07:30"
+    backup_time: str = "03:15"           # nightly database backup; "off" to disable
+    backup_dir: str = "Backups/Jarvis"   # Nextcloud folder for backups (never inside the vault)
     evening_time: str = "21:00"         # evening preview of tomorrow; "" or "off" to switch it off
     brief_latitude: str = ""
     brief_longitude: str = ""
@@ -189,6 +191,8 @@ class Settings:
             ha_verify_tls=_bool("HA_VERIFY_TLS", True),
             brief_time=_str("BRIEF_TIME", "07:30"),
             evening_time=_str("EVENING_TIME", "21:00"),
+            backup_time=_str("BACKUP_TIME", "03:15"),
+            backup_dir=_str("BACKUP_DIR", "Backups/Jarvis"),
             brief_latitude=_str("BRIEF_LATITUDE"),
             brief_longitude=_str("BRIEF_LONGITUDE"),
             brief_place=_str("BRIEF_PLACE"),

@@ -180,6 +180,45 @@ class FilesBackendIntegration(IntegrationBase):
         self.assertTrue(health["ok"], health)
         self.assertIn("writes via Nextcloud", health["detail"])
 
+    def test_nightly_backup(self):
+        import gzip
+        import sqlite3
+        from jarvis.auth import Auth
+        from jarvis.backup import Backup
+        s = self.services
+        Auth(s.db).set_password("a very long password")
+        s.db.execute("UPDATE auth SET totp_secret = 'SECRET', totp_enabled = 1")
+        s.db.execute("INSERT INTO sessions (token_hash, created, last_seen, expires) VALUES ('t', 1, 1, 9e9)")
+        s.db.execute("INSERT INTO scheduled (created, kind, text, due, repeat, payload, status, source) "
+                     "VALUES (1, 'reminder', 'call Sam', 2e9, '', '{}', 'scheduled', 'chat')")
+        backup_root = Path(self.tmp.name) / "nextcloud-backups"
+        backup_root.mkdir()
+        cloud = FakeNextcloud(backup_root, folder="Backups/Jarvis")
+        with Server(cloud.app()) as server:
+            backup = Backup(self.settings, s.db, NextcloudWriter(server.url, "chris", "app-pass", "Backups/Jarvis"))
+            self.settings.backup_time = "off"
+            self.assertFalse(backup.due())
+            self.assertEqual(run(backup.run()), "not due")
+            result = run(backup.run(force=True))
+        self.assertIn("uploaded to Nextcloud", result)
+        local = sorted((self.settings.data_dir / "backups").glob("jarvis-*.sqlite3.gz"))
+        self.assertEqual(len(local), 1)
+        uploaded = [p for p in backup_root.iterdir() if p.name.startswith("jarvis-")]
+        self.assertTrue(uploaded)
+        restored = Path(self.tmp.name) / "restored.sqlite3"
+        restored.write_bytes(gzip.decompress(uploaded[0].read_bytes()))
+        db = sqlite3.connect(restored)
+        self.assertEqual(db.execute("SELECT text FROM scheduled").fetchone()[0], "call Sam")
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0, "no sign-in sessions")
+        self.assertEqual(db.execute("SELECT totp_secret, totp_enabled FROM auth").fetchone(), (None, 0))
+        self.assertTrue(db.execute("SELECT password_hash FROM auth").fetchone()[0])
+        db.close()
+        self.assertEqual(s.db.one("SELECT totp_secret FROM auth")["totp_secret"], "SECRET", "the live database is untouched")
+        # a week of local copies at most
+        for n in range(10):
+            backup._keep_locally(b"x", f"2026-01-{n + 1:02d}")
+        self.assertEqual(len(list((self.settings.data_dir / "backups").glob("jarvis-*.sqlite3.gz"))), 7)
+
     def test_notes_can_be_read_in_jarvis(self):
         from starlette.testclient import TestClient
         from jarvis.auth import Auth

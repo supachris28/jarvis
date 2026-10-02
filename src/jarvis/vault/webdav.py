@@ -64,8 +64,10 @@ class NextcloudWriter:
                                  f"(HTTP {response.status_code}){hint}")
 
     async def put(self, path: str, text: str) -> None:
-        body = text.encode("utf-8")
-        headers = {"Content-Type": "text/markdown; charset=utf-8"}
+        await self.put_bytes(path, text.encode("utf-8"), "text/markdown; charset=utf-8")
+
+    async def put_bytes(self, path: str, body: bytes, content_type: str) -> None:
+        headers = {"Content-Type": content_type}
         client = http.shared(timeout=30, verify=self.verify)
         for attempt in range(3):
             response = await self._request(client, "PUT", path, content=body, headers=headers)

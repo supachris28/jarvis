@@ -114,6 +114,61 @@ function showLogin(session) {
     $("#login-hint").classList.toggle("hidden", session.password_set);
   }
 }
+/* ---------- shared to Jarvis (Android share menu) and home-screen shortcuts ----------
+   The manifest's share_target opens /?share_text=…&share_url=…; shortcuts open /?ask=… . They're read once (kept
+   through signing in) and removed from the address bar. */
+const incoming = (() => {
+  const q = new URLSearchParams(location.search);
+  const found = { text: q.get("share_text") || "", url: q.get("share_url") || "", title: q.get("share_title") || "",
+                  ask: q.get("ask") || "" };
+  if (found.text || found.url || found.title || found.ask) {
+    try { sessionStorage.setItem("jarvis.incoming", JSON.stringify(found)); } catch { /* private mode */ }
+    history.replaceState(null, "", "/" + (found.ask || found.text || found.url ? "#chat" : location.hash));
+    return found;
+  }
+  try { return JSON.parse(sessionStorage.getItem("jarvis.incoming") || "null"); } catch { return null; }
+})();
+function takeIncoming() {
+  try { sessionStorage.removeItem("jarvis.incoming"); } catch { /* ignore */ }
+  return incoming;
+}
+function sendPrompt(text) { setPrompt(text); $("#chat-form").requestSubmit(); }
+function sharedText(item) {
+  /* apps put the link in text, url or both — and often the title again at the start of the text */
+  let text = (item.text || "").trim();
+  if (item.title && !text.startsWith(item.title)) text = `${item.title}\n${text}`.trim();
+  if (item.url && !text.includes(item.url)) text = `${text}\n${item.url}`.trim();
+  return text.slice(0, 3000);
+}
+function showShared(item) {
+  const text = sharedText(item);
+  if (!text) return;
+  const tracking = /https?:\/\/\S*(track|parcel|deliver|royalmail|evri|dpd|ups|fedex|amazon\.[a-z.]+\/(gp\/)?(your-?orders|progress-tracker))/i.test(text)
+    || /\b[A-Z0-9]*\d[A-Z0-9]{9,}\b/.test(text);
+  const card = document.createElement("div");
+  card.className = "msg activity shared";
+  card.innerHTML = `<div class="body"><p class="muted small">Shared with Jarvis</p><p class="shared-text"></p>
+    <div class="shared-actions">
+      <button type="button" data-share="calendar">📅 Add to calendar</button>
+      <button type="button" data-share="remember" class="ghost">📝 Remember</button>
+      ${tracking ? '<button type="button" data-share="track" class="ghost">📦 Track parcel</button>' : ""}
+      <button type="button" data-share="ask" class="ghost">💬 Ask about it</button>
+      <button type="button" data-share="dismiss" class="ghost">✕</button>
+    </div></div>`;
+  card.querySelector(".shared-text").textContent = text.length > 400 ? text.slice(0, 400) + "…" : text;
+  card.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-share]")?.dataset.share;
+    if (!action) return;
+    card.remove();
+    if (action === "calendar") sendPrompt(`Add to my calendar: ${text}`);
+    if (action === "remember") sendPrompt(`Remember that ${text}`);
+    if (action === "track") sendPrompt(`Track ${text}`);
+    if (action === "ask") { setPrompt(`\n\n"""${text}"""`); $("#prompt").setSelectionRange(0, 0); }
+  });
+  $("#messages").appendChild(card);
+  scrollChatToBottom();
+}
+
 async function boot() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   const session = await (await fetch("/api/session", { credentials: "same-origin" })).json();
@@ -124,7 +179,10 @@ async function boot() {
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   route();
-  loadHistory();
+  await loadHistory();
+  const item = takeIncoming();
+  if (item && item.ask) sendPrompt(item.ask);
+  else if (item) showShared(item);
 }
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();

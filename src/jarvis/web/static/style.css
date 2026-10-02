@@ -189,3 +189,8 @@ a.cite { text-decoration: none; font-size: .8em; vertical-align: super; padding:
 .report-form label { display: flex; flex-direction: column; gap: .3rem; }
 .report.fixed, .report.dismissed { opacity: .7; }
 .report p { margin: .3rem 0; }
+
+/* something shared to Jarvis from another app */
+.shared .shared-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 0 .5rem; }
+.shared-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.shared-actions button { font-size: .85rem; padding: .35rem .7rem; }
