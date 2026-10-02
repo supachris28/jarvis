@@ -85,3 +85,45 @@ class Speech:
         if response.status_code >= 400:
             raise SpeechError(f"Speech service returned HTTP {response.status_code}: {response.text[:200]}")
         return response.content, response.headers.get("content-type", "audio/mpeg").split(";")[0]
+
+
+class Hearing:
+    """Speech to text for the 🎤 button: a Whisper server on the PC (OpenAI-compatible
+    /v1/audio/transcriptions, e.g. speaches / faster-whisper-server) when JARVIS_STT_URL is set and reachable;
+    otherwise the app uses the phone's own speech recognition."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.settings.stt_url)
+
+    async def health(self) -> dict:
+        if not self.configured:
+            return {"ok": True, "detail": "phone/browser speech recognition (set JARVIS_STT_URL for Whisper)"}
+        try:
+            response = await http.shared(timeout=5).get(self.settings.stt_url.rstrip("/") + "/health")
+        except httpx.HTTPError as error:
+            return {"ok": False, "detail": f"Whisper offline ({type(error).__name__}) — using phone recognition"}
+        return {"ok": response.status_code < 400, "detail": f"Whisper on the PC ({self.settings.stt_model})"
+                if response.status_code < 400 else f"Whisper HTTP {response.status_code}"}
+
+    async def transcribe(self, audio: bytes, content_type: str) -> str:
+        if not self.configured:
+            raise SpeechError("Server speech recognition isn't set up.")
+        extension = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3",
+                     "audio/wav": "wav", "audio/x-wav": "wav"}.get(content_type.split(";")[0].strip(), "webm")
+        try:
+            response = await http.shared(timeout=60).post(
+                self.settings.stt_url.rstrip("/") + "/v1/audio/transcriptions",
+                files={"file": (f"speech.{extension}", audio, content_type or "audio/webm")},
+                data={"model": self.settings.stt_model, "language": "en", "response_format": "json"})
+        except httpx.HTTPError as error:
+            raise SpeechError(f"Whisper unreachable ({type(error).__name__}).") from None
+        if response.status_code >= 400:
+            raise SpeechError(f"Whisper returned HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            return str(response.json().get("text", "")).strip()
+        except ValueError:
+            return response.text.strip()

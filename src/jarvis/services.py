@@ -32,7 +32,7 @@ from .pipelines.scheduled import Scheduler
 from .google.contacts import Contacts
 from .ha import HomeAssistant
 from .websearch import WebSearch
-from .tts import Speech
+from .tts import Hearing, Speech
 from .pipelines.gmail import GmailPipeline
 from .vault.client import ObsidianVault, VaultUnavailable
 from .vault.files import FileVault
@@ -131,6 +131,7 @@ class Services:
         except Exception:  # noqa: BLE001 — never block startup on housekeeping
             log.exception("event suggestion cleanup failed")
         self.speech = Speech(settings)
+        self.hearing = Hearing(settings)
         self.ha = HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_verify_tls)
         self.web = WebSearch(settings, self.db)
         self.contacts_pipeline = ContactsPipeline(self.db, Contacts(self.oauth), self.writer)
@@ -409,8 +410,8 @@ class Services:
         return items[:limit]
 
     async def status(self) -> dict:
-        llm, vault, home, web = await asyncio.gather(self.llm.health(), self.vault.health(), self.ha.health(),
-                                                     self.web.health())
+        llm, vault, home, web, hearing = await asyncio.gather(
+            self.llm.health(), self.vault.health(), self.ha.health(), self.web.health(), self.hearing.health())
         return {
             "components": {
                 "model": llm,
@@ -418,6 +419,7 @@ class Services:
                 "google": self.oauth.status(),
                 "ntfy": self.notifier.status(),
                 "voice": self.speech.status(),
+                "hearing": hearing,
                 "home": home,
                 "web": web,
             },

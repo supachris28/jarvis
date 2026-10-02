@@ -208,7 +208,7 @@ header { position: relative; }
   box-shadow: 0 0 6px rgb(var(--c)); transform: translateY(-1px); }
 .l-idle { --c: 91, 141, 239; } .l-think { --c: 170, 200, 255; } .l-talk { --c: 224, 231, 255; }
 .l-speak { --c: 125, 211, 252; } .l-done { --c: 74, 222, 128; } .l-error { --c: 248, 113, 113; }
-.l-alert { --c: 251, 176, 34; } .l-off { --c: 120, 128, 140; }
+.l-alert { --c: 251, 176, 34; } .l-hear { --c: 110, 231, 183; } .l-off { --c: 120, 128, 140; }
 .lights-legend i.places { background: linear-gradient(90deg, #a78bfa, #f87171, #34d399, #facc15, #fb923c, #2dd4bf); box-shadow: none; }
 .lights-legend em { font-style: normal; font-weight: 600; }
 .c-vault { color: #a78bfa; } .c-gmail { color: #f87171; } .c-calendar { color: #34d399; }
@@ -221,3 +221,9 @@ header { position: relative; }
 /* renewals and deadlines */
 .deadline { display: grid; gap: .25rem; }
 .deadline.soon { border-color: var(--warn); }
+
+/* 🎤 */
+.composer .mic { flex: none; padding: .55em .8em; font-size: 1.05rem; }
+.composer .mic.on { background: var(--bad); color: #fff; border-color: var(--bad); animation: mic-pulse 1.2s infinite; }
+@keyframes mic-pulse { 50% { opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { .composer .mic.on { animation: none; } }

@@ -81,6 +81,8 @@ class Settings:
 
     tts_provider: str = "browser"         # kokoro | elevenlabs | browser
     tts_url: str = "http://kokoro:8880"
+    stt_url: str = ""                     # Whisper (OpenAI-compatible) for the 🎤 button; "" = phone recognition
+    stt_model: str = "Systran/faster-whisper-small.en"
     tts_voice: str = "bm_george"
     tts_speed: float = 1.0
     elevenlabs_api_key: str = ""
@@ -182,6 +184,8 @@ class Settings:
             vault_save_notify_minutes=_int("NOTIFY_VAULT_SAVES_MINUTES", 15),
             tts_provider=_str("JARVIS_TTS_PROVIDER", "browser").casefold(),
             tts_url=_str("JARVIS_TTS_URL", "http://kokoro:8880"),
+            stt_url=_str("JARVIS_STT_URL"),
+            stt_model=_str("JARVIS_STT_MODEL", "Systran/faster-whisper-small.en"),
             tts_voice=_str("JARVIS_TTS_VOICE", "bm_george"),
             tts_speed=float(_str("JARVIS_TTS_SPEED", "1.0") or 1.0),
             elevenlabs_api_key=_str("ELEVENLABS_API_KEY"),

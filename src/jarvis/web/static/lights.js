@@ -16,12 +16,13 @@
 */
 const Lights = (() => {
   const COLORS = {
-    idle: [91, 141, 239], thinking: [170, 200, 255], talking: [224, 231, 255], speaking: [125, 211, 252],
+    idle: [91, 141, 239], hearing: [110, 231, 183], thinking: [170, 200, 255], talking: [224, 231, 255], speaking: [125, 211, 252],
     done: [74, 222, 128], error: [248, 113, 113], alert: [251, 176, 34], bad: [249, 112, 102], offline: [120, 128, 140],
     vault: [167, 139, 250], gmail: [248, 113, 113], calendar: [52, 211, 153], drive: [250, 204, 21],
     home: [251, 146, 60], web: [45, 212, 191], brief: [252, 211, 77], bible: [253, 230, 138],
   };
   const MEANING = {
+    hearing: "Hearing you — speak, then pause",
     idle: "All well — waiting for you",
     listening: "Listening — taking in what you type",
     thinking: "Thinking — working out what you asked",
@@ -77,6 +78,12 @@ const Lights = (() => {
   function token() {
     if (state !== "talking") set("talking");
     for (let n = 0; n < 2; n++) bump(0.8);
+  }
+  let loudness = 0;
+  function voice(level) {         // microphone level 0..1 while hearing you
+    loudness = Math.max(level, loudness * 0.7);
+    const mid = Math.floor(cols / 2);
+    bump(level * 0.9, mid + Math.round((Math.random() - 0.5) * cols * level));
   }
   function ripple() {              // a keypress: a ripple from the middle
     if (state === "idle" || state === "listening") set("listening");
@@ -160,6 +167,13 @@ const Lights = (() => {
       }
       case "talking":
         return [0.25 + e * 0.75 + 0.08 * Math.sin(t * 3 + c), color("talking")];
+      case "hearing": {
+        const mid = (cols - 1) / 2;
+        const d = Math.abs(c - mid) / Math.max(1, mid);
+        const level = 0.3 + Math.max(0, loudness * 1.6 - d) * (r === 1 ? 1 : 0.75) + e * 0.4;
+        loudness *= 0.995;
+        return [level, color("hearing")];
+      }
       case "speaking": {
         const mid = (cols - 1) / 2;
         const d = Math.abs(c - mid) / Math.max(1, mid);
@@ -191,5 +205,5 @@ const Lights = (() => {
     if (legend && !legend.classList.contains("hidden") && !event.target.closest("#lights-legend")) legend.classList.add("hidden");
   });
 
-  return { mount, set, flash, token, bump, ripple, setProblems, get state() { return state; } };
+  return { mount, set, flash, token, bump, ripple, voice, setProblems, get state() { return state; } };
 })();

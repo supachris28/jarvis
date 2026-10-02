@@ -172,10 +172,11 @@ function showShared(item) {
 /* the lights show one amber/red segment per part of Jarvis that is down */
 let lightsMounted = false;
 const STATUS_NAMES = { model: "model (PC)", obsidian: "vault", google: "Google", ntfy: "notifications", voice: "voice",
+                       hearing: "Whisper",
                        home: "Home Assistant", web: "internet search" };
 function healthProblems(data) {
   const down = Object.entries(data.components || {})
-    .filter(([, c]) => !c.ok && !/not configured|disabled|switched off|browser voice/i.test(c.detail || ""))
+    .filter(([, c]) => !c.ok && !/not configured|disabled|switched off|browser voice|phone recognition/i.test(c.detail || ""))
     .map(([key]) => STATUS_NAMES[key] || key);
   const jobs = (data.jobs || []).filter((j) => j.ok === false).map((j) => `${j.name} job`);
   return [...down, ...jobs];
@@ -197,6 +198,8 @@ async function boot() {
   if (!session.authenticated) return showLogin(session);
   vaultName = session.vault || vaultName;
   ttsProvider = session.tts || "browser";
+  sttMode = session.stt || "browser";
+  setupMic();
   updateVoiceButton();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
@@ -391,7 +394,8 @@ $("#chat-form").addEventListener("submit", async (event) => {
   if (traceId) addDetailsButton(bubble, traceId);
   if (text.trim()) addReportButton(bubble, traceId, text, meta && meta.route);
   $("#send").disabled = false;
-  if ((voiceOn() || (meta && meta.speak)) && text.trim()) speak(text, bubble.querySelector("button.speak"));  // "read me …" speaks
+  const askedAloud = spokenPrompt; spokenPrompt = false;
+  if ((voiceOn() || askedAloud || (meta && meta.speak)) && text.trim()) speak(text, bubble.querySelector("button.speak"));  // "read me …" speaks
 });
 
 /* [1], [2] in a web answer → links to its sources. Only text nodes are touched, never attributes or code. */
@@ -420,6 +424,111 @@ function linkCitations(root, sources) {
     node.replaceWith(parts);
   }
 }
+
+/* ---------- 🎤 speaking to Jarvis ----------
+   Whisper on the PC when the server has it (recorded here, sent to /api/stt), otherwise the phone's own speech
+   recognition (Chrome sends that audio to Google). Stops after ~1.8 s of quiet or 60 s; the words are sent and the
+   reply is read aloud. The lights follow your voice while listening. */
+let sttMode = "browser", spokenPrompt = false, micSession = null;
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+function setupMic() {
+  const can = (sttMode === "server" && navigator.mediaDevices && window.MediaRecorder) || SpeechRecognitionAPI;
+  $("#mic").classList.toggle("hidden", !can);
+}
+function micState(on) {
+  $("#mic").classList.toggle("on", on);
+  $("#mic").setAttribute("aria-pressed", String(on));
+  $("#mic").textContent = on ? "■" : "🎤";
+  if (on) Lights.set("hearing"); else if (Lights.state === "hearing") Lights.set("idle");
+}
+function sendSpoken(text) {
+  text = (text || "").trim();
+  if (!text) { Lights.flash("error"); return; }
+  spokenPrompt = true;
+  sendPrompt(text);
+}
+async function startServerMic() {
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch { alertInline("Jarvis can't use the microphone — allow it in the browser's site settings."); return; }
+  const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const chunks = [];
+  const context = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = context.createAnalyser(); analyser.fftSize = 512;
+  context.createMediaStreamSource(stream).connect(analyser);
+  const samples = new Uint8Array(analyser.fftSize);
+  let lastSound = performance.now(), heard = false;
+  const started = performance.now();
+  const timer = setInterval(() => {
+    analyser.getByteTimeDomainData(samples);
+    let peak = 0;
+    for (const v of samples) peak = Math.max(peak, Math.abs(v - 128));
+    const level = peak / 128;
+    if (level > 0.08) { lastSound = performance.now(); heard = true; }
+    Lights.voice(level);
+    const quiet = performance.now() - lastSound;
+    if ((heard && quiet > 1800) || (!heard && quiet > 6000) || performance.now() - started > 60000) stop();
+  }, 60);
+  function stop() { if (recorder.state === "recording") recorder.stop(); }
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    clearInterval(timer); stream.getTracks().forEach((t) => t.stop()); context.close().catch(() => {});
+    micSession = null; micState(false);
+    if (!heard) return;
+    Lights.set("thinking");
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    try {
+      const response = await api("/api/stt", { method: "POST", body: blob, headers: { "Content-Type": blob.type } });
+      const data = await response.json();
+      if (response.ok) { sendSpoken(data.text); return; }
+      if (data.fallback && SpeechRecognitionAPI) {
+        sttMode = "browser";
+        alertInline("Whisper on the PC isn't reachable — using the phone's speech recognition instead. Tap 🎤 again.");
+      } else alertInline(data.error || "Couldn't make out what you said.");
+    } catch (error) { alertInline(`Couldn't send the recording (${error.message}).`); }
+    Lights.flash("error");
+  };
+  recorder.start(250);
+  micSession = { stop };
+  micState(true);
+}
+function startBrowserMic() {
+  const recognition = new SpeechRecognitionAPI();
+  recognition.lang = "en-GB"; recognition.interimResults = true; recognition.continuous = false;
+  let finalText = "";
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const piece = event.results[i][0].transcript;
+      if (event.results[i].isFinal) finalText += piece; else interim += piece;
+      Lights.voice(0.6 + Math.random() * 0.4);
+    }
+    setPrompt((finalText + interim).trim());
+  };
+  recognition.onerror = (event) => {
+    if (event.error === "not-allowed") alertInline("Jarvis can't use the microphone — allow it in the browser's site settings.");
+    else if (event.error !== "no-speech" && event.error !== "aborted") alertInline(`Speech recognition: ${event.error}`);
+  };
+  recognition.onend = () => {
+    micSession = null; micState(false);
+    if (finalText.trim()) { setPrompt(""); sendSpoken(finalText); }
+  };
+  recognition.start();
+  micSession = { stop: () => recognition.stop() };
+  micState(true);
+}
+function alertInline(text) {
+  const note = addMessage("activity", text);
+  note.classList.add("mic-note");
+  setTimeout(() => note.remove(), 8000);
+}
+$("#mic").addEventListener("click", () => {
+  if (micSession) { micSession.stop(); return; }
+  stopSpeaking(); unlockAudio();
+  if (sttMode === "server" && navigator.mediaDevices && window.MediaRecorder) startServerMic();
+  else if (SpeechRecognitionAPI) startBrowserMic();
+});
 
 /* ---------- voice ---------- */
 const audio = new Audio();
@@ -925,7 +1034,7 @@ async function loadStatus() {
   showDeviceSettings();
   const data = await (await api("/api/status")).json();
   Lights.setProblems(healthProblems(data));
-  const names = { model: "Model (PC)", obsidian: "Vault", google: "Google", ntfy: "Notifications", voice: "Voice", home: "Home Assistant", web: "Internet search" };
+  const names = { model: "Model (PC)", obsidian: "Vault", google: "Google", ntfy: "Notifications", voice: "Voice", hearing: "Listening (🎤)", home: "Home Assistant", web: "Internet search" };
   const google = data.components.google || {};
   $("#google-connect").classList.toggle("hidden", !!google.ok);  // only needed until Google is connected
   $("#components").innerHTML = Object.entries(data.components).map(([key, c]) =>

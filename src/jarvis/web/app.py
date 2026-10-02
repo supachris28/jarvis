@@ -81,7 +81,7 @@ class Guard(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=()")
+        response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
         if path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
         return response
@@ -118,6 +118,7 @@ async def session(request: Request) -> Response:
         "version": __version__,
         "vault": request.app.state.settings.obsidian_vault_name,
         "tts": request.app.state.services.speech.provider,
+        "stt": "server" if request.app.state.services.hearing.configured else "browser",
     })
 
 
@@ -588,6 +589,28 @@ async def feedback_export(request: Request) -> Response:
                     headers={"Content-Disposition": f'attachment; filename="jarvis-reports-{time.strftime("%Y%m%d")}.json"'})
 
 
+MAX_AUDIO = 4 * 1024 * 1024  # a minute of speech is well under 1 MB; SWAG allows 5 MB
+
+
+async def stt(request: Request) -> Response:
+    """🎤: a short recording → text (Whisper on the PC). 503 tells the app to use the phone's recognition."""
+    hearing = request.app.state.services.hearing
+    if not hearing.configured:
+        return JSONResponse({"error": "Whisper isn't set up", "fallback": True}, status_code=503)
+    audio = await request.body()
+    if not audio:
+        return JSONResponse({"error": "no audio"}, status_code=400)
+    if len(audio) > MAX_AUDIO:
+        return JSONResponse({"error": "recording too long"}, status_code=413)
+    try:
+        text = await hearing.transcribe(audio, request.headers.get("content-type", "audio/webm"))
+    except SpeechError as error:
+        diag.warning("stt", str(error))
+        return JSONResponse({"error": str(error), "fallback": True}, status_code=503)
+    diag.event("stt", f"heard {len(text)} characters", bytes=len(audio))
+    return JSONResponse({"text": text})
+
+
 async def tts(request: Request) -> Response:
     services: Services = request.app.state.services
     try:
@@ -737,6 +760,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/events/senders", event_senders),
             Route("/api/events/senders/unmute", event_sender_unmute, methods=["POST"]),
             Route("/api/tts", tts, methods=["POST"]),
+            Route("/api/stt", stt, methods=["POST"]),
             Route("/api/diag/logs", diag_logs),
             Route("/api/diag/traces", diag_traces),
             Route("/api/diag/meta", diag_meta),

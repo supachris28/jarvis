@@ -425,6 +425,60 @@ class VoiceTests(IntegrationBase):
             self.assertIn("media-src 'self' blob:", client.get("/").headers["content-security-policy"])
 
 
+class FakeWhisper:
+    """OpenAI-compatible /v1/audio/transcriptions."""
+
+    def __init__(self):
+        self.requests = []
+
+    def app(self):
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse, PlainTextResponse
+        from starlette.routing import Route
+
+        async def transcribe(request):
+            form = await request.form()
+            upload = form["file"]
+            self.requests.append({"model": form["model"], "language": form["language"], "filename": upload.filename,
+                                  "bytes": len(await upload.read())})
+            return JSONResponse({"text": " What's on tomorrow? "})
+
+        async def health(request):
+            return PlainTextResponse("OK")
+        return Starlette(routes=[Route("/v1/audio/transcriptions", transcribe, methods=["POST"]),
+                                 Route("/health", health)])
+
+
+class HearingTests(IntegrationBase):
+    def test_whisper_and_phone_fallback(self):
+        app = create_app(self.settings, self.services, start_jobs=False)
+        Auth(self.services.db).set_password("a very long password")
+        h = {"X-Jarvis": "1"}
+        with TestClient(app, base_url="http://localhost:8080") as client:
+            client.post("/api/login", json={"password": "a very long password"}, headers=h)
+            self.assertEqual(client.get("/api/session").json()["stt"], "browser")
+            response = client.post("/api/stt", content=b"audio", headers=h | {"Content-Type": "audio/webm"})
+            self.assertEqual((response.status_code, response.json()["fallback"]), (503, True))
+            self.assertIn("microphone=(self)", client.get("/").headers["permissions-policy"])
+            whisper = FakeWhisper()
+            with Server(whisper.app()) as server:
+                self.settings.stt_url = server.url
+                self.assertEqual(client.get("/api/session").json()["stt"], "server")
+                self.assertEqual(client.post("/api/stt", content=b"audio", headers={"Content-Type": "audio/webm"})
+                                 .status_code, 403, "needs the app's header")
+                response = client.post("/api/stt", content=b"x" * 2000,
+                                       headers=h | {"Content-Type": "audio/webm;codecs=opus"})
+                self.assertEqual(response.json(), {"text": "What's on tomorrow?"})
+                self.assertEqual(whisper.requests[0], {"model": "Systran/faster-whisper-small.en", "language": "en",
+                                                       "filename": "speech.webm", "bytes": 2000})
+                self.assertEqual(client.post("/api/stt", content=b"", headers=h).status_code, 400)
+                self.assertTrue(client.get("/api/status").json()["components"]["hearing"]["ok"])
+            self.settings.stt_url = f"http://127.0.0.1:{__import__('test_jarvis').free_port()}"  # PC off
+            response = client.post("/api/stt", content=b"audio", headers=h | {"Content-Type": "audio/webm"})
+            self.assertEqual((response.status_code, response.json()["fallback"]), (503, True))
+            self.assertIn("phone recognition", client.get("/api/status").json()["components"]["hearing"]["detail"])
+
+
 class EventTextTests(IntegrationBase.__mro__[1]):
     def test_dates_and_times_in_calendar_requests(self):
         from datetime import datetime as dt

@@ -228,6 +228,21 @@ You need Docker Desktop on the PC.
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
 - Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
 
+### Speaking to Jarvis (🎤)
+
+The 🎤 button next to Send records what you say, sends it when you pause (or tap ■), and reads the reply aloud.
+Out of the box it uses the phone's own speech recognition (in Chrome that audio goes to Google). For private, more
+accurate recognition run Whisper on the PC's GPU next to Ollama, e.g. [speaches](https://speaches.ai):
+
+```
+docker run -d --name whisper --gpus all -p 8000:8000 --restart unless-stopped \
+  -v whisper-cache:/home/ubuntu/.cache/huggingface ghcr.io/speaches-ai/speaches:latest-cuda
+curl -X POST http://localhost:8000/v1/models/Systran/faster-whisper-small.en   # download the model once
+```
+
+then set `JARVIS_STT_URL=http://<PC IP>:8000` (allow port 8000 through the PC's firewall, as for Ollama). When the
+PC is off Jarvis falls back to the phone's recognition. Status shows which is in use.
+
 ### Renewals, deadlines and replies you're waiting for
 
 Jarvis reads renewal notices (insurance, subscriptions, memberships, licences), MOT reminders, "return by" dates,
