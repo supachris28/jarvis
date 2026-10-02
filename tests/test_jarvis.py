@@ -330,6 +330,28 @@ class IntegrationTests(IntegrationBase):
         n.set_preferences({"brief": {"chat": False}})
         self.assertFalse(n.in_chat("brief"))
 
+    def test_phone_notifications_are_plain_text(self):
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+        received = []
+
+        async def publish(request):
+            received.append(await request.json())
+            return JSONResponse({"id": "1"})
+        with Server(Starlette(routes=[Route("/", publish, methods=["POST"])])) as ntfy:
+            self.settings.ntfy_url, self.settings.ntfy_topic = ntfy.url, "jarvis-test"
+            n = self.services.notifier
+            message = ("- ⏰ Early start — 07:00 — [[Sources/Calendar/x (abc)|Amen Corner]]\n"
+                       "- 📦 **Boots**: Out for delivery — [track](https://track.example/1)\n"
+                       "- [[People/Sam Jones]] — [Boiler service](/#email?thread=t1)")
+            self.assertEqual(self.run_async(n.notify("Tomorrow — **Saturday**", message, 5, category="system")), "sent")
+        body = received[0]
+        self.assertEqual(body["title"], "Tomorrow — Saturday")
+        self.assertEqual(body["message"], "- ⏰ Early start — 07:00 — Amen Corner\n- 📦 Boots: Out for delivery\n"
+                                          "- Sam Jones — Boiler service")
+        self.assertFalse(body["markdown"])
+
     def test_model_is_kept_loaded(self):
         llm = self.services.llm
         self.assertEqual(llm.keep_alive, -1)

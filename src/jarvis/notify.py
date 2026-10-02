@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, time as dtime
@@ -17,6 +18,19 @@ from .config import Settings
 from .db import Database
 
 log = logging.getLogger(__name__)
+
+
+def push_text(text: str) -> str:
+    """Phone notifications show text as-is (the ntfy Android app doesn't render Markdown), so links and
+    formatting become plain words: [[Note|Name]] → Name, [track](https://…) → track, **bold** → bold."""
+    text = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", text)
+    text = re.sub(r"\[\[([^\]]+)\]\]", lambda m: m.group(1).rsplit("/", 1)[-1], text)
+    text = re.sub(r"\s*—?\s*\[(track|open|link)\]\([^)]*\)", "", text, flags=re.I)  # bare link words add nothing
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"(\*\*|__)(.+?)\1", r"\2", text)
+    text = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    return re.sub(r"[ \t]+\n", "\n", text).strip()
 
 
 def in_quiet_hours(now: datetime, spec: str) -> bool:
@@ -149,9 +163,9 @@ class Notifier:
             self.db.execute("UPDATE notifications SET status = 'logged' WHERE id = ?", (note_id,))
             diag.debug("notify", f"ntfy not configured — only logged: {title}")
             return "logged"
-        body = {"topic": self.settings.ntfy_topic, "title": title, "message": message,
+        body = {"topic": self.settings.ntfy_topic, "title": push_text(title), "message": push_text(message),
                 "priority": max(1, min(5, priority)), "click": url or self.settings.public_url,
-                "markdown": True}
+                "markdown": False}
         if tags:
             body["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
         auth = {"Authorization": f"Bearer {self.settings.ntfy_token}"} if self.settings.ntfy_token else {}
