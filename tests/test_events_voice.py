@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -437,10 +438,17 @@ class FakeWhisper:
         from starlette.routing import Route
 
         async def transcribe(request):
-            form = await request.form()
-            upload = form["file"]
-            self.requests.append({"model": form["model"], "language": form["language"], "filename": upload.filename,
-                                  "bytes": len(await upload.read())})
+            # parsed by hand: Starlette's form parsing needs python-multipart, which Jarvis doesn't install
+            boundary = request.headers["content-type"].split("boundary=")[1].encode()
+            fields = {}
+            for part in (await request.body()).split(b"--" + boundary)[1:-1]:
+                head, _, value = part.partition(b"\r\n\r\n")
+                name = re.search(rb'name="([^"]+)"', head).group(1).decode()
+                filename = re.search(rb'filename="([^"]+)"', head)
+                fields[name] = (filename.group(1).decode(), len(value) - 2) if filename else value[:-2].decode()
+            filename, size = fields["file"]
+            self.requests.append({"model": fields["model"], "language": fields["language"], "filename": filename,
+                                  "bytes": size})
             return JSONResponse({"text": " What's on tomorrow? "})
 
         async def health(request):
