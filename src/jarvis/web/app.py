@@ -22,6 +22,7 @@ from .. import __version__, diag, http
 from ..auth import Auth
 from ..config import Settings
 from ..google.oauth import GoogleError
+from ..hooks import EVENTS
 from ..services import Services
 from ..tts import SpeechError
 from ..ha import HAError
@@ -31,12 +32,12 @@ from ..vault.markdown import split_frontmatter
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 COOKIE = "jarvis_session"
-PUBLIC_PATHS = {"/", "/healthz", "/api/session", "/api/login", "/manifest.webmanifest", "/sw.js",
+PUBLIC_PATHS = {"/", "/healthz", "/api/session", "/api/login", "/manifest.webmanifest", "/sw.js", "/share-target",
                 "/auth/google/callback"}  # callback is protected by the OAuth state from /auth/google/start
 
 QUIET_PATHS = {"/api/chat", "/api/activity", "/api/session", "/api/status", "/api/chat/history", "/api/tts"}
 
-CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self' blob: data:; "
+CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; media-src 'self' blob: data:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
@@ -48,6 +49,8 @@ class Guard(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         auth: Auth = request.app.state.auth
+        if path.startswith("/api/hook/"):  # Home Assistant: its own token instead of a session (and no CSRF header)
+            return await call_next(request)
         needs_auth = not (path in PUBLIC_PATHS or path.startswith("/static/"))
         if needs_auth and not auth.session_valid(request.cookies.get(COOKIE)):
             if path.startswith("/api/"):
@@ -297,6 +300,84 @@ async def vault_note(request: Request) -> Response:
         return JSONResponse({"path": path, "title": path.rsplit("/", 1)[-1].removesuffix(".md"), "body": body,
                              "properties": properties, "obsidian_url": services.assistant.obsidian_url(path)})
     return JSONResponse({"error": f"There's no note called {target!r} in the vault."}, status_code=404)
+
+
+async def ocr(request: Request) -> Response:
+    """A shared screenshot → its text (Tesseract on the server)."""
+    from ..ocr import OCRError, read_image
+    try:
+        text = await read_image(await request.body())
+    except OCRError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+    diag.event("ocr", f"read {len(text)} characters from a shared image")
+    return JSONResponse({"text": text})
+
+
+def _multipart_fields(body: bytes, content_type: str) -> dict[str, str]:
+    """Text fields of a multipart form (Starlette's own parser needs python-multipart, which isn't installed)."""
+    match = re.search(r"boundary=\"?([^\";]+)", content_type)
+    if not match:
+        return {}
+    fields: dict[str, str] = {}
+    for part in body.split(b"--" + match.group(1).encode())[1:-1]:
+        head, _, value = part.partition(b"\r\n\r\n")
+        name = re.search(rb'name="([^"]+)"', head)
+        if name and b"filename=" not in head:
+            fields[name.group(1).decode(errors="replace")] = value[:-2].decode("utf-8", errors="replace")[:4000]
+    return fields
+
+
+async def share_target(request: Request) -> Response:
+    """Android's share menu posts here. Normally the service worker answers first (and keeps any image); this is
+    the fallback, so shared text still arrives when it isn't running. It only redirects — nothing is stored."""
+    from urllib.parse import urlencode
+    body = await request.body()
+    fields = _multipart_fields(body[:2_000_000], request.headers.get("content-type", "")) if body else {}
+    query = {f"share_{k}": fields.get(k, "") for k in ("title", "text", "url") if fields.get(k)}
+    if b"filename=" in body[:2_000_000]:
+        query["share_note"] = "image"
+    return RedirectResponse("/?" + urlencode(query), status_code=303)
+
+
+async def hook(request: Request) -> Response:
+    """Home Assistant → Jarvis (Status → Home Assistant triggers). Token as 'Authorization: Bearer …' or ?token=."""
+    hooks = request.app.state.services.hooks
+    given = request.headers.get("authorization", "").removeprefix("Bearer ").strip() or request.query_params.get("token", "")
+    if not hooks.check(given):
+        diag.warning("hook", f"rejected a Home Assistant trigger with a wrong token from {client_ip(request)}")
+        return JSONResponse({"error": "wrong token"}, status_code=401)
+    result = await hooks.fire(request.path_params["event"])
+    return JSONResponse(result, status_code=404 if result.get("error") else 200)
+
+
+async def hook_settings(request: Request) -> Response:
+    hooks = request.app.state.services.hooks
+    if request.method == "POST":
+        hooks.new_token()
+    base = request.app.state.settings.public_url.rstrip("/")
+    return JSONResponse({"token": hooks.token, "events": list(EVENTS),
+                         "url": f"{base}/api/hook/", "brief_time": request.app.state.settings.brief_time})
+
+
+async def vault_note_append(request: Request) -> Response:
+    """Add a line to a note from the note reader (your own words; undo from the reader or the Vault tab)."""
+    services: Services = request.app.state.services
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    path, text = str(body.get("path", ""))[:400], str(body.get("text", ""))[:4000]
+    parts = path.split("/")
+    if not path.endswith(".md") or any(p.startswith(".") or p in ("", "..") for p in parts):
+        return JSONResponse({"error": "not a note"}, status_code=400)
+    if not text.strip():
+        return JSONResponse({"error": "Nothing to add."}, status_code=400)
+    try:
+        change = await services.writer.append_text(path, text)
+    except VaultError as error:
+        return JSONResponse({"error": str(error)}, status_code=503 if "reach" in str(error) else 400)
+    return JSONResponse({"ok": True, "change_id": change})
 
 
 async def deadlines_list(request: Request) -> Response:
@@ -791,6 +872,11 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/notifications/test", test_notification, methods=["POST"]),
             Route("/api/vault/changes", vault_changes),
             Route("/api/vault/note", vault_note),
+            Route("/api/vault/note/append", vault_note_append, methods=["POST"]),
+            Route("/api/hook/{event}", hook, methods=["POST"]),
+            Route("/api/ocr", ocr, methods=["POST"]),
+            Route("/share-target", share_target, methods=["POST"]),
+            Route("/api/hooks", hook_settings, methods=["GET", "POST"]),
             Route("/api/feedback", feedback_add, methods=["POST"]),
             Route("/api/feedback", feedback_list),
             Route("/api/feedback/export", feedback_export),

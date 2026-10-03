@@ -57,6 +57,9 @@ CATEGORIES = {
     "home":      {"label": "Home actions",                    "on": True,  "quiet": True,  "chat": False},
     "saves":     {"label": "Notes saved to your vault",       "on": False, "quiet": True,  "chat": True},
     "deliveries": {"label": "Delivery updates",               "on": True,  "quiet": True,  "chat": False},
+    "welcome":   {"label": "Welcome home summary (Home Assistant)", "on": True, "quiet": True, "chat": True},
+    "birthdays": {"label": "Birthday heads-up (a week before, with gift ideas)", "on": True, "quiet": True,
+                  "chat": True},
     "collections": {"label": "Ready to collect (lockers, shops, Click & Collect)", "on": True, "quiet": True,
                     "chat": True},
     "deadlines": {"label": "Renewals and deadlines",          "on": True,  "quiet": True,  "chat": False},
@@ -64,7 +67,7 @@ CATEGORIES = {
     "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True, "chat": False},
 }
 # "chat": also post it in the chat timeline. The brief and vault save reports post their own (fuller) messages there.
-CHAT_SELF_POSTED = {"brief", "evening", "saves"}
+CHAT_SELF_POSTED = {"brief", "evening", "saves", "welcome"}
 # "quiet": True = held during quiet hours (and counted in the hourly cap); False = always delivered at once.
 
 

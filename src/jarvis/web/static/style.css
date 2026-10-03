@@ -231,3 +231,10 @@ header { position: relative; }
 /* ready to collect */
 .delivery .collect { margin: .4rem 0; padding: .5rem .7rem; border-radius: 10px; background: var(--bg); display: grid; gap: .2rem; }
 .collect-code { font: 600 1.25rem/1.2 ui-monospace, Consolas, monospace; letter-spacing: .12em; user-select: all; }
+
+.note-add { margin-top: .6rem; display: grid; gap: .4rem; }
+
+#hook-yaml { overflow-x: auto; background: var(--bg); padding: .6rem; border-radius: 8px; }
+#hooks-box ul { margin: .3rem 0; padding-left: 1.2rem; }
+
+.shared-image { max-width: 100%; max-height: 260px; border-radius: 8px; display: block; margin-top: .3rem; }

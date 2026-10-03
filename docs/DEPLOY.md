@@ -228,6 +228,23 @@ You need Docker Desktop on the PC.
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
 - Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
 
+### Home Assistant triggers
+
+Status → **Home Assistant triggers** shows a token and an example `rest_command` + automations. Home Assistant can
+POST `/api/hook/morning` (send today's brief now — e.g. first motion downstairs; `BRIEF_TIME` stays as the
+fallback, once a day), `/api/hook/home` ("Welcome home": the rest of today, parcels delivered or to collect, things
+due by tomorrow, an early start) and `/api/hook/evening` (the evening preview now). Each replies with a short
+`speech` text to play with `tts.speak`. The token goes in an `Authorization: Bearer …` header; "New token" replaces it.
+
+### Shared screenshots, birthdays, adding to notes
+
+- Share a screenshot (a booking, a WhatsApp message) to Jarvis: the server reads its text (Tesseract, in the
+  image) and offers Add to calendar / Remember / Track / Ask. Text shares work as before.
+- A week before each birthday (and the day before) you get a heads-up with gift ideas from the person's note —
+  lines that mention gifts, wish lists or what they like, or anything under a "Gift ideas" heading
+  ("Birthday heads-up" in the notification settings).
+- In Jarvis's note reader, "Add to this note" appends a dated line to the note; Undo there or in the Vault tab.
+
 ### Speaking to Jarvis (🎤)
 
 The 🎤 button next to Send records what you say, sends it when you pause (or tap ■), and reads the reply aloud.

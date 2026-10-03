@@ -133,6 +133,12 @@
         <div id="note-path" class="muted small"></div>
         <dl id="note-properties" class="card note-properties hidden"></dl>
         <div id="note-body" class="card note-body"></div>
+        <form id="note-add" class="card note-add">
+          <label for="note-add-text" class="small">Add to this note <span class="muted">(added at the end with today's
+            date — undo any time)</span></label>
+          <textarea id="note-add-text" rows="2" placeholder="e.g. Likes Earl Grey; birthday drinks at The Crown"></textarea>
+          <div class="row-actions"><button type="submit">Add</button><span id="note-add-status" class="muted small"></span></div>
+        </form>
       </section>
 
       <section id="view-status" class="view hidden">
@@ -153,6 +159,24 @@
           <div id="calendar-list" class="list"></div>
           <div class="toolbar"><span id="calendar-status" class="muted small"></span>
             <button id="calendar-save">Save</button></div>
+        </details>
+        <details id="hooks-box" class="card">
+          <summary><strong>Home Assistant triggers</strong> <span class="muted small">— brief when you come downstairs,
+            summary when you get home</span></summary>
+          <p class="small">Home Assistant calls Jarvis at these addresses (POST, with the token as
+            <code>Authorization: Bearer …</code>). Each answers with a short <code>speech</code> text you can play on a
+            speaker.</p>
+          <ul class="small">
+            <li><code>morning</code> — sends today's brief now (once a day; <code>BRIEF_TIME</code> stays as the fallback)</li>
+            <li><code>home</code> — “Welcome home”: the rest of today, parcels delivered or to collect, things due tomorrow</li>
+            <li><code>evening</code> — sends the evening preview now (once a day)</li>
+          </ul>
+          <p class="small">Address: <code id="hook-url"></code></p>
+          <p class="small">Token: <code id="hook-token">••••••••</code>
+            <button type="button" class="ghost" id="hook-show">Show</button>
+            <button type="button" class="ghost" id="hook-new" title="The old token stops working">New token</button></p>
+          <details><summary class="small">Example for Home Assistant's configuration.yaml</summary>
+            <pre id="hook-yaml" class="small"></pre></details>
         </details>
         <div class="card">
           <h3>This device</h3>

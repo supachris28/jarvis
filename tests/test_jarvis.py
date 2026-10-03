@@ -382,7 +382,7 @@ class IntegrationTests(IntegrationBase):
             self.assertIn("default-src 'self'", client.get("/").headers["content-security-policy"])
             # installable with a share target: manifest and every icon it names are served without signing in
             manifest = TestClient(app, base_url="http://localhost:8080").get("/manifest.webmanifest").json()
-            self.assertEqual(manifest["share_target"]["action"], "/")
+            self.assertEqual((manifest["share_target"]["action"], manifest["share_target"]["method"]), ("/share-target", "POST"))
             for icon in manifest["icons"] + [i for s in manifest["shortcuts"] for i in s["icons"]]:
                 self.assertEqual(TestClient(app, base_url="http://localhost:8080").get(icon["src"]).status_code, 200,
                                  icon["src"])

@@ -120,10 +120,10 @@ function showLogin(session) {
 const incoming = (() => {
   const q = new URLSearchParams(location.search);
   const found = { text: q.get("share_text") || "", url: q.get("share_url") || "", title: q.get("share_title") || "",
-                  ask: q.get("ask") || "" };
-  if (found.text || found.url || found.title || found.ask) {
+                  ask: q.get("ask") || "", image: q.get("share_image") === "1", note: q.get("share_note") || "" };
+  if (found.text || found.url || found.title || found.ask || found.image || found.note) {
     try { sessionStorage.setItem("jarvis.incoming", JSON.stringify(found)); } catch { /* private mode */ }
-    history.replaceState(null, "", "/" + (found.ask || found.text || found.url ? "#chat" : location.hash));
+    history.replaceState(null, "", "/#chat");
     return found;
   }
   try { return JSON.parse(sessionStorage.getItem("jarvis.incoming") || "null"); } catch { return null; }
@@ -140,6 +140,46 @@ function sharedText(item) {
   if (item.url && !text.includes(item.url)) text = `${text}\n${item.url}`.trim();
   return text.slice(0, 3000);
 }
+async function sharedImage() {
+  try {
+    const cache = await caches.open("jarvis-share");
+    const response = await cache.match("/shared-image");
+    if (!response) return null;
+    const blob = await response.blob();
+    await cache.delete("/shared-image");
+    return blob;
+  } catch { return null; }
+}
+/* a shared screenshot: show it, read its text on the server, then offer the same buttons as shared text */
+async function showSharedImage(item) {
+  const blob = item.image ? await sharedImage() : null;
+  if (!blob) {
+    if (item.note === "image") alertInline("The screenshot didn't come through — open Jarvis once, then share it again.");
+    return showShared(item);
+  }
+  const card = document.createElement("div");
+  card.className = "msg activity shared";
+  card.innerHTML = '<div class="body"><p class="muted small">Shared with Jarvis — reading the screenshot…</p><img class="shared-image" alt="Shared screenshot"></div>';
+  card.querySelector("img").src = URL.createObjectURL(blob);
+  $("#messages").appendChild(card);
+  scrollChatToBottom();
+  Lights.set("thinking");
+  let text = "";
+  try {
+    const r = await api("/api/ocr", { method: "POST", body: blob, headers: { "Content-Type": blob.type || "image/png" } });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "couldn't read it");
+    text = data.text;
+  } catch (error) {
+    card.querySelector("p").textContent = `Shared with Jarvis — ${error.message}`;
+    Lights.flash("error");
+    return;
+  }
+  Lights.flash("done");
+  card.remove();
+  if (!text.trim()) { alertInline("I couldn't find any text in that screenshot."); return; }
+  showShared({ ...item, text: [sharedText(item), text].filter(Boolean).join("\n"), title: "", url: "", fromImage: true });
+}
 function showShared(item) {
   const text = sharedText(item);
   if (!text) return;
@@ -147,7 +187,7 @@ function showShared(item) {
     || /\b[A-Z0-9]*\d[A-Z0-9]{9,}\b/.test(text);
   const card = document.createElement("div");
   card.className = "msg activity shared";
-  card.innerHTML = `<div class="body"><p class="muted small">Shared with Jarvis</p><p class="shared-text"></p>
+  card.innerHTML = `<div class="body"><p class="muted small">Shared with Jarvis${item.fromImage ? " — text read from the screenshot (check it)" : ""}</p><p class="shared-text"></p>
     <div class="shared-actions">
       <button type="button" data-share="calendar">📅 Add to calendar</button>
       <button type="button" data-share="remember" class="ghost">📝 Remember</button>
@@ -208,7 +248,7 @@ async function boot() {
   await loadHistory();
   const item = takeIncoming();
   if (item && item.ask) sendPrompt(item.ask);
-  else if (item) showShared(item);
+  else if (item) showSharedImage(item);
 }
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -897,6 +937,7 @@ function propertyValue(value) {
 }
 async function loadNote(path) {
   $("#note-title").textContent = "Loading…";
+  $("#note-add-status").textContent = "";
   $("#note-path").textContent = "";
   $("#note-properties").innerHTML = "";
   $("#note-body").innerHTML = "";
@@ -911,7 +952,26 @@ async function loadNote(path) {
   $("#note-properties").innerHTML = props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${propertyValue(v)}</dd>`).join("");
   $("#note-properties").classList.toggle("hidden", !props.length);
   $("#note-body").innerHTML = markdown(data.body || "");
+  $("#note-add").dataset.path = data.path;
 }
+$("#note-add").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = $("#note-add-text").value.trim();
+  const path = $("#note-add").dataset.path;
+  if (!text || !path) return;
+  $("#note-add-status").textContent = "Adding…";
+  const r = await api("/api/vault/note/append", { method: "POST", body: JSON.stringify({ path, text }) });
+  const data = await r.json();
+  if (!r.ok) { $("#note-add-status").textContent = data.error || "Couldn't add that."; return; }
+  $("#note-add-text").value = "";
+  await loadNote(path);
+  $("#note-add-status").innerHTML = 'Added. <button type="button" class="ghost" id="note-undo">Undo</button>';
+  $("#note-undo").addEventListener("click", async () => {
+    const u = await api(`/api/vault/revert/${data.change_id}`, { method: "POST" });
+    await loadNote(path);
+    $("#note-add-status").textContent = u.ok ? "Undone." : "Couldn't undo — see the Vault tab.";
+  }, { once: true });
+});
 $("#note-back").addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else location.hash = "#chat"; });
 
 /* ---------- this device's settings (kept in this browser only) ---------- */
@@ -1034,6 +1094,61 @@ $("#scan-events").addEventListener("click", async (event) => {
 });
 
 /* ---------- status ---------- */
+let hookToken = "";
+async function loadHooks() {
+  const data = await (await api("/api/hooks")).json();
+  hookToken = data.token;
+  $("#hook-url").textContent = `${data.url}{morning|home|evening}`;
+  $("#hook-token").textContent = "••••••••"; $("#hook-show").textContent = "Show";
+  $("#hook-yaml").textContent = `rest_command:
+  jarvis:
+    url: "${data.url}{{ event }}"
+    method: POST
+    headers:
+      Authorization: !secret jarvis_token   # secrets.yaml: jarvis_token: "Bearer <token>"
+    timeout: 30
+
+automation:
+  - alias: Jarvis brief when I come downstairs
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.hall_motion      # your sensor
+        to: "on"
+    conditions:
+      - condition: time
+        after: "06:00:00"
+        before: "11:00:00"
+    actions:
+      - action: rest_command.jarvis
+        data: { event: morning }
+        response_variable: jarvis
+      - action: tts.speak                       # optional: read it out
+        target: { entity_id: tts.piper }
+        data:
+          media_player_entity_id: media_player.kitchen
+          message: "{{ jarvis.content.speech }}"
+  - alias: Jarvis welcome home
+    triggers:
+      - trigger: zone
+        entity_id: person.chris
+        zone: zone.home
+        event: enter
+    actions:
+      - action: rest_command.jarvis
+        data: { event: home }`;
+}
+$("#hooks-box").addEventListener("toggle", () => { if ($("#hooks-box").open) loadHooks(); });
+$("#hook-show").addEventListener("click", () => {
+  const shown = $("#hook-token").textContent !== "••••••••";
+  $("#hook-token").textContent = shown ? "••••••••" : hookToken;
+  $("#hook-show").textContent = shown ? "Show" : "Hide";
+});
+$("#hook-new").addEventListener("click", async () => {
+  if (!confirm("Make a new token? Home Assistant will need the new one.")) return;
+  await api("/api/hooks", { method: "POST" });
+  await loadHooks();
+  $("#hook-token").textContent = hookToken; $("#hook-show").textContent = "Hide";
+});
 async function loadStatus() {
   showDeviceSettings();
   const data = await (await api("/api/status")).json();

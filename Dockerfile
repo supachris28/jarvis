@@ -17,6 +17,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
+# Tesseract reads text from screenshots shared to Jarvis
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 

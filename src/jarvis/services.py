@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 
 from .assistant.core import Assistant
 from .backup import Backup
+from .hooks import Hooks
 from .config import Settings
 from . import diag
 from .db import Database
@@ -25,6 +26,7 @@ from .notify import Notifier
 from .pipelines.calendar import CalendarPipeline
 from .pipelines.brief import Brief
 from .pipelines.contacts import ContactsPipeline
+from .pipelines.birthdays import BirthdayReminders
 from .pipelines.deadlines import Deadlines
 from .pipelines.deliveries import Deliveries
 from .pipelines.events import EventFinder
@@ -146,6 +148,8 @@ class Services:
         self.assistant.deliveries = self.brief.deliveries = self.deliveries
         self.assistant.deadlines = self.brief.deadlines = self.deadlines
         self.brief.birthday_source = self.assistant.birthdays  # contacts + People notes + vault mentions
+        self.hooks = Hooks(self)
+        self.birthday_reminders = BirthdayReminders(settings, self.notifier, self.vault, self.assistant.birthdays)
         self.ha.alias_source = self.assistant.home_names  # "gas water heater" → water_heater.thermostat1
         self._learn_home_names_from_captures()
         self._apply_calendar_choice()
@@ -166,6 +170,7 @@ class Services:
                 f"Back up Jarvis's database at {settings.backup_time or 'off'} (server + Nextcloud)"),
             Job("evening", 60, self.brief.run_evening, f"Evening preview of tomorrow at {settings.evening_time or 'off'}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
+            Job("birthdays", 3600, self.birthday_reminders.run, "Birthday heads-up a week (and a day) before"),
             Job("deadlines", 3600, self._google(self.deadlines.run),
                 "Renewals, deadlines and replies you're waiting for (from email)"),
             Job("deliveries", 3600, self._deliveries_job, "Follow tracking links of active deliveries"),

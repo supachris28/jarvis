@@ -118,6 +118,24 @@ class VaultWriter:
             "DELETE FROM note_history WHERE id <= (SELECT MAX(id) FROM note_history) - ?", (HISTORY_KEEP,)
         )
 
+    async def append_text(self, path: str, text: str, actor: str = "you") -> int:
+        """Add a dated line to the end of an existing note (from the note reader). Returns the change's id, which
+        the Vault tab (or the reader's Undo) can revert."""
+        existing = await self.vault.get_text(path)
+        if existing is None:
+            raise VaultError(f"There's no note at {path}.")
+        existing = existing.replace("\r\n", "\n")
+        stamp = f"{datetime.now(self.tz):%Y-%m-%d %H:%M}"
+        lines = [line.rstrip() for line in text.strip().splitlines() if line.strip()]
+        if not lines:
+            raise VaultError("Nothing to add.")
+        added = f"- {stamp} — {lines[0]}" + "".join(f"\n  {line}" for line in lines[1:])
+        updated = existing.rstrip("\n") + ("\n" if existing.strip() else "") + "\n" + added + "\n"
+        await self.vault.put_text(path, updated)
+        self.record(path, actor, existing, updated)
+        diag.event("vault", f"added to {path}", actor=actor, chars=len(text))
+        return self.db.one("SELECT MAX(id) AS id FROM note_history WHERE path = ?", (path,))["id"]
+
     async def revert(self, history_id: int) -> str:
         row = self.db.one("SELECT * FROM note_history WHERE id = ?", (history_id,))
         if row is None:
