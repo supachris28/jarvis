@@ -32,7 +32,10 @@
   <div id="app" class="app hidden">
     <header>
       <span class="brand">Jarvis</span>
-      <button id="visor" class="visor" type="button" aria-label="Jarvis's lights. Tap for what they mean."><canvas></canvas></button>
+      <div class="face">
+        <button id="visor" class="visor" type="button" aria-label="Jarvis's lights. Tap for what they mean."><canvas></canvas></button>
+        <p id="visor-caption" class="visor-caption" aria-hidden="true"><i></i><span></span></p>
+      </div>
       <div id="lights-legend" class="lights-legend card hidden" role="dialog" aria-label="What the lights mean">
         <p><strong>Right now:</strong> <span class="now"></span></p>
         <ul>
@@ -51,7 +54,8 @@
           <li><i class="l-off"></i><span><b>Dim grey</b> — can't reach the Jarvis server</span></li>
         </ul>
       </div>
-      <button id="voice-toggle" class="ghost voice" type="button" aria-pressed="false">🔈 Voice off</button>
+      <button id="voice-toggle" class="voice" type="button" aria-pressed="false" title="Read every reply aloud">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path class="waves" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="slash" d="M16 9.5l5 5M21 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="label">Speak replies</span><span class="switch" aria-hidden="true"></span></button>
       <nav>
         <a href="#chat" data-view="chat">Chat</a>
         <a href="#plan" data-view="plan">Plan</a>
@@ -65,11 +69,11 @@
     <main>
       <section id="view-chat" class="view chat">
         <div id="messages" class="messages" aria-live="polite"></div>
-        <button type="button" id="stop-speech" class="stop-speech hidden" aria-label="Stop speaking">■ Stop speaking</button>
+        <button type="button" id="stop-speech" class="stop-speech hidden" aria-label="Stop speaking"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg> Stop speaking</button>
         <form id="chat-form" class="composer">
           <textarea id="prompt" rows="1" placeholder="Ask Jarvis…" required></textarea>
-          <button type="button" id="mic" class="ghost mic hidden" aria-pressed="false" aria-label="Speak to Jarvis">🎤</button>
-          <button type="submit" id="send">Send</button>
+          <button type="button" id="mic" class="mic hidden" aria-pressed="false" aria-label="Speak to Jarvis" title="Speak to Jarvis"><svg class="icon mic-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="icon stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></button>
+          <button type="submit" id="send" aria-label="Send"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z" fill="currentColor"/></svg><span class="label">Send</span></button>
         </form>
       </section>
 

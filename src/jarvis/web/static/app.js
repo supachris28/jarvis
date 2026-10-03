@@ -478,7 +478,8 @@ function setupMic() {
 function micState(on) {
   $("#mic").classList.toggle("on", on);
   $("#mic").setAttribute("aria-pressed", String(on));
-  $("#mic").textContent = on ? "■" : "🎤";
+  $("#mic").setAttribute("aria-label", on ? "Stop listening" : "Speak to Jarvis");
+  if (!on) $("#mic").style.setProperty("--level", 0);
   if (on) Lights.set("hearing"); else if (Lights.state === "hearing") Lights.set("idle");
 }
 function sendSpoken(text) {
@@ -507,6 +508,7 @@ async function startServerMic() {
     const level = peak / 128;
     if (level > 0.08) { lastSound = performance.now(); heard = true; }
     Lights.voice(level);
+    $("#mic").style.setProperty("--level", Math.min(1, level * 2.5).toFixed(2));
     const quiet = performance.now() - lastSound;
     if ((heard && quiet > 1800) || (!heard && quiet > 6000) || performance.now() - started > 60000) stop();
   }, 60);
@@ -543,6 +545,7 @@ function startBrowserMic() {
       const piece = event.results[i][0].transcript;
       if (event.results[i].isFinal) finalText += piece; else interim += piece;
       Lights.voice(0.6 + Math.random() * 0.4);
+      $("#mic").style.setProperty("--level", (0.5 + Math.random() * 0.5).toFixed(2));
     }
     setPrompt((finalText + interim).trim());
   };
@@ -577,8 +580,9 @@ let speechRun = 0;
 function voiceOn() { return store.get("jarvis.voice", "off") === "on"; }
 function updateVoiceButton() {
   const on = voiceOn();
-  $("#voice-toggle").textContent = on ? "🔊 Voice on" : "🔈 Voice off";
+  $("#voice-toggle").classList.toggle("on", on);
   $("#voice-toggle").setAttribute("aria-pressed", String(on));
+  $("#voice-toggle").setAttribute("aria-label", on ? "Speak replies: on" : "Speak replies: off");
 }
 $("#stop-speech").addEventListener("click", stopSpeaking);
 $("#voice-toggle").addEventListener("click", () => {
