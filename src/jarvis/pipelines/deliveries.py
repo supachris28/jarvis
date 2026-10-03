@@ -51,13 +51,28 @@ ORDER_NUMBER = re.compile(r"\border\s*(?:number|no\.?|ref(?:erence)?|#|id)\s*(?:
 TRACK_LINK_TEXT = re.compile(r"\btrack(?:ing)?\b|\bwhere'?s my\b|\bfollow (?:your|my) (?:parcel|order|delivery)\b", re.I)
 
 # ---------------------------------------------------------------------------- status by script
-STATUSES = ["ordered", "dispatched", "in_transit", "out_for_delivery", "attempted", "delayed", "delivered"]
+STATUSES = ["ordered", "dispatched", "in_transit", "out_for_delivery", "attempted", "delayed", "ready_to_collect",
+            "delivered"]
 LABELS = {"ordered": "Ordered", "dispatched": "Dispatched", "in_transit": "On its way", "out_for_delivery":
-          "Out for delivery", "attempted": "Delivery attempted", "delayed": "Delayed", "delivered": "Delivered"}
+          "Out for delivery", "attempted": "Delivery attempted", "delayed": "Delayed",
+          "ready_to_collect": "Ready to collect", "delivered": "Delivered"}
 ICONS = {"ordered": "🧾", "dispatched": "📦", "in_transit": "🚚", "out_for_delivery": "🛵", "attempted": "📭",
-         "delayed": "⏳", "delivered": "✅"}
+         "delayed": "⏳", "ready_to_collect": "📍", "delivered": "✅"}
+# "ready to collect" from a locker, parcel shop, Post Office or store (Click & Collect)
+READY = re.compile(
+    r"\b(?:ready (?:to|for) (?:collect(?:ion)?|pick[- ]?up|be collected)|ready and waiting (?:for you)?|"
+    r"available (?:to|for) (?:collect(?:ion)?|pick[- ]?up)|awaiting (?:your )?collection|"
+    r"waiting (?:for you )?(?:to be collected|for (?:you to )?(?:collect(?:ion)?|pick[- ]?up))|"
+    r"(?:has |have )?arrived (?:at|in) (?:the |your )?(?:chosen |selected )?(?:locker|parcel ?(?:shop|point|locker)|"
+    r"pick[- ]?up (?:point|location|shop)|collection point|post office|store|shop|counter)|"
+    r"(?:click (?:&|and) collect|collection) order is (?:now )?(?:ready|available))\b", re.I)
+COLLECTED = re.compile(r"\b(?:you(?:'ve| have)? (?:successfully )?collected|(?:has|have) been (?:collected|picked up) "
+                       r"(?:by you|from (?:the )?(?:locker|store|shop|parcel ?shop|collection point|post office))|"
+                       r"thanks? (?:you )?for collecting|collection (?:is )?complete)\b", re.I)
 # checked in this order: the first match wins, so "delivered" beats "out for delivery" in the same text
 STATUS_PATTERNS = [
+    ("collected", COLLECTED),          # reported as delivered ("Collected")
+    ("ready_to_collect", READY),       # before "delivered": "delivered to the locker — ready to collect"
     ("delivered", re.compile(r"\b(?:has been|have been|was|were|been|successfully|now)\s+delivered\b|"
                              r"\bdelivered\s+(?:to|at|into|in)\s+(?:your|the|a|safe|front|back|porch|neighbour|parcel|mailbox|letterbox)|"
                              r"\b(?:parcel|order|package|item)s?\s+(?:has|have)\s+arrived\b(?!\s+(?:at|in|into|with))|^\s*delivered\b|\bstatus:?\s*delivered\b",
@@ -77,20 +92,21 @@ STATUS_PATTERNS = [
                               r"ready (?:to ship|for dispatch)|label created|shipping label)\b", re.I)),
     ("ordered", re.compile(r"\b(?:order (?:confirmed|confirmation|received)|thanks for your order|we've received your order)\b", re.I)),
 ]
-SCHEMA_STATUS = {"OrderDelivered": "delivered", "OrderInTransit": "in_transit", "OrderPickupAvailable": "out_for_delivery",
+SCHEMA_STATUS = {"OrderDelivered": "delivered", "OrderInTransit": "in_transit", "OrderPickupAvailable": "ready_to_collect",
                  "OrderProcessing": "ordered", "OrderProblem": "delayed", "OrderReturned": "delayed",
                  "OrderPaymentDue": "ordered"}
 DELIVERY_EMAIL = re.compile(
     r"\b(?:dispatched|despatched|shipped|out for delivery|has been delivered|was delivered|been delivered|"
     r"on (?:its|the) way|in transit|track (?:your|my) (?:order|parcel|package|delivery|item)|tracking (?:number|link|info)|"
     r"delivery (?:update|scheduled|window|slot|date|is (?:due|expected))|your (?:parcel|package|delivery)|"
-    r"arriving (?:today|tomorrow|on)|missed you|attempted delivery|courier)\b", re.I)
+    r"arriving (?:today|tomorrow|on)|missed you|attempted delivery|courier|ready (?:to|for) (?:collect(?:ion)?|pick[- ]?up)|"
+    r"click (?:&|and) collect|collection (?:point|code)|parcel ?(?:shop|locker)|locker)\b", re.I)
 NOT_DELIVERY = re.compile(r"\b(?:free delivery|delivery (?:charges|pass|offer)|% off|sale|newsletter|"
                           r"subscribe|unsubscribe from deliveries)\b", re.I)
 EXPECTED = re.compile(r"\b(?:arriving|arrives|expected(?: delivery)?|estimated(?: delivery)?|delivery date|due|"
                       r"will be delivered|delivered by|get it|should arrive|arrive)\b[^.\n]{0,12}?(?:on|by|between|:)?\s*"
                       r"(?P<rest>[^\n]{0,60})", re.I)
-LOOK_BACK_TERMS = ['dispatched', 'despatched', 'shipped', '"out for delivery"', '"on its way"', 'delivered',
+LOOK_BACK_TERMS = ['"ready to collect"', '"ready for collection"', '"ready for pickup"', 'dispatched', 'despatched', 'shipped', '"out for delivery"', '"on its way"', 'delivered',
                    '"tracking number"', '"track your"', '"your parcel"', '"your package"', '"missed you"', 'courier']
 JSON_STATUS = re.compile(r'"(?:status|statusDescription|statusText|state|description|eventDescription|summary|'
                          r'trackingStatus|deliveryStatus|currentStatus)"\s*:\s*"([^"]{3,120})"', re.I)
@@ -105,6 +121,12 @@ def classify(text: str) -> tuple[str, str]:
                 continue
             if status == "delivered" and FUTURE.search(sentence):
                 continue  # "will be delivered", "once it's delivered" — not delivered yet
+            if status == "ready_to_collect" and re.search(r"\b(?:will be|once (?:it'?s|it is)|when (?:it'?s|it is)|"
+                                                          r"we'?ll (?:let you know|email you))\b[^.]{0,40}$",
+                                                          sentence[:READY.search(sentence).start()], re.I):
+                continue  # "we'll email you when it's ready to collect"
+            if status == "collected":
+                return "delivered", one_line(sentence, 160)
             return status, one_line(sentence, 160)
     return "", ""
 
@@ -158,6 +180,44 @@ def step_tracker(markup: str) -> str:
 
 FUTURE = re.compile(r"\b(?:will|would|should|could|to be|once|when|if|before|after it(?:'s| is))\b[^.]{0,40}\bdelivered\b",
                     re.I)
+
+
+COLLECT_CODE = re.compile(r"\b(?:(?:collection|pick[- ]?up|locker|unlock|access|release|parcel|claim)\s*(?:code|pin|number|no\.?)|"
+                          r"pin(?:\s*code)?)\s*(?:is|:|-)?\s*\**\s*([A-Z0-9]{4,12})\b", re.I)
+COLLECT_PLACE = re.compile(
+    r"(?im)^\s*(?:collection point|collection address|pick[- ]?up (?:point|location|address)|parcel ?(?:shop|locker|point)|"
+    r"locker(?: location)?|store|collect (?:it )?from|where to collect)\s*[:\-]\s*(?P<place>.{3,90}?)\s*$|"
+    r"\b(?:collect (?:it |them |your (?:parcel|order|items?|package) )?from|ready (?:to collect|for (?:collection|pick[- ]?up)) "
+    r"(?:at|from)|(?:has |have )?arrived (?:at|in)):?\s+(?:the |your )?(?P<inline>[A-Z0-9][^.\n;]{2,70})")
+COLLECT_BY = re.compile(r"\b(?:collect (?:it |them |your \w+ )?(?:by|before|no later than)|available (?:until|till)|"
+                        r"(?:kept|held) (?:for you )?(?:until|till)|before it(?:'s| is) returned|"
+                        r"will be returned (?:to the sender )?(?:after|on|if not collected by))\b(?P<rest>[^\n]{0,50})", re.I)
+WITHIN = re.compile(r"\b(?:within|for)\s+(\d{1,2})\s+(?:calendar\s+|working\s+)?days\b", re.I)
+
+
+def collection_details(text: str, ts: float, tz) -> dict:
+    """Where to collect it, the code to show or type, and the date it must be collected by."""
+    details = {"collect_place": "", "collect_code": "", "collect_by": ""}
+    place = COLLECT_PLACE.search(text)
+    if place:
+        found = place.group("place") or place.group("inline") or ""
+        found = re.split(r"\s+(?:and|is|for|where|which|until|within|by|before)\b|[!?]", found)[0]
+        details["collect_place"] = one_line(found.strip(" :-,"), 90)
+    for code in COLLECT_CODE.finditer(text):
+        if re.search(r"\d", code.group(1)):  # "locker code is below" — a word isn't a code
+            details["collect_code"] = code.group(1).upper()
+            break
+    sent = datetime.fromtimestamp(ts, tz).date()
+    by = COLLECT_BY.search(text)
+    if by:
+        day, _ = _find_date(by.group("rest"), sent, ("iso", "num", "dmy", "mdy", "weekday"))
+        if day and sent <= day <= sent + timedelta(days=60):
+            details["collect_by"] = day.isoformat()
+    if not details["collect_by"]:
+        within = WITHIN.search(text) if READY.search(text) else None
+        if within and 1 <= int(within.group(1)) <= 30:
+            details["collect_by"] = (sent + timedelta(days=int(within.group(1)))).isoformat()
+    return details
 
 
 def delivered_time(text: str, ts: float, tz) -> float:
@@ -376,6 +436,17 @@ class Deliveries:
                 else f"{moment:%a %d %b}"
             item["delivered_text"] = f"{day} at {moment:%H:%M}"
             item["label"] = f"Delivered {day}"
+        item["collect_by_text"] = ""
+        if item.get("collect_by"):
+            try:
+                day = date.fromisoformat(item["collect_by"])
+                today = datetime.now(tz).date()
+                item["collect_by_text"] = "today" if day == today else "tomorrow" if day == today + timedelta(days=1) \
+                    else f"{day:%a} {day.day} {day:%b}"
+            except ValueError:
+                pass
+        if item["status"] == "delivered" and COLLECTED.search(item["status_text"] or ""):
+            item["label"] = item["label"].replace("Delivered", "Collected")
         item["checked_text"] = datetime.fromtimestamp(item["last_checked"], tz).strftime("%a %H:%M") \
             if item["last_checked"] else ""
         return item
@@ -402,7 +473,8 @@ class Deliveries:
             carrier = carrier or found
         carrier = carrier or carrier_for(url, text)
         status, evidence = self.email_status(message)  # a progress graphic's ticks beat the words near it
-        if not (number or url or data) and status not in {"out_for_delivery", "delivered", "dispatched", "attempted"}:
+        if not (number or url or data) and status not in {"out_for_delivery", "delivered", "dispatched", "attempted",
+                                                          "ready_to_collect"}:
             return None  # talks about delivery but gives nothing to track (e.g. a marketing mention)
         order = data.get("order_number") or (ORDER_NUMBER.search(text).group(1) if ORDER_NUMBER.search(text) else "")
         now = datetime.now(self.settings.tz)
@@ -419,6 +491,8 @@ class Deliveries:
             "expected": data.get("expected") or find_expected(text, now.date()),
             "thread_id": message.thread_id,
         }
+        if status == "ready_to_collect":
+            fields |= collection_details(text, message.ts, self.settings.tz)
         return self.upsert(fields, status or "dispatched", evidence or one_line(message.subject, 160),
                            via="email", ts=message.ts, title=message.subject,
                            detail=" ".join(s for s in re.split(r"(?<=[.!?])\s+|\n+", message.body[:3000])
@@ -444,19 +518,23 @@ class Deliveries:
             fields = {**fields}
             cursor = self.db.execute(
                 "INSERT INTO deliveries (created, updated, retailer, item, carrier, tracking_number, tracking_url, "
-                "order_number, status, status_text, expected, source, thread_id, poll, history, delivered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "order_number, status, status_text, expected, source, thread_id, poll, history, delivered_at, "
+                "collect_place, collect_code, collect_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (time.time(), ts, fields.get("retailer", ""), fields.get("item", ""),
                  fields.get("carrier", ""), fields.get("tracking_number", ""), fields.get("tracking_url", ""),
                  fields.get("order_number", ""), status, text, fields.get("expected", ""), via if via == "chat" else "email",
                  fields.get("thread_id", ""), int(bool(fields.get("tracking_url"))), json.dumps(history),
-                 delivered_time(detail or text, ts, self.settings.tz) if status == "delivered" else None))
+                 delivered_time(detail or text, ts, self.settings.tz) if status == "delivered" else None,
+                 fields.get("collect_place", ""), fields.get("collect_code", ""), fields.get("collect_by", "")))
             diag.event("deliveries", f"new delivery: {fields.get('retailer') or fields.get('carrier')} — {LABELS[status]}",
                        email=title, **{k: v for k, v in fields.items() if v})
             self._pending.append(cursor.lastrowid)
             return cursor.lastrowid
         # fill in anything we didn't know, keep what we did
         updates = {k: v for k, v in fields.items() if v and not row[k] and k != "thread_id"}
+        updates |= {k: fields[k] for k in ("collect_place", "collect_code", "collect_by") if fields.get(k)
+                    and fields[k] != row[k]}
         if fields.get("expected") and fields["expected"] != row["expected"]:
             updates["expected"] = fields["expected"]
         if updates.get("tracking_url") and not row["poll"] and not row["poll_note"]:
@@ -473,6 +551,9 @@ class Deliveries:
             return False
         if row["status"] == "delivered" and status != "delivered" and via == "page":
             return False  # a tracking page that lags behind doesn't un-deliver a parcel
+        if row["status"] == "ready_to_collect" and status in {"ordered", "dispatched", "in_transit", "out_for_delivery"} \
+                and via == "page":
+            return False  # nor send a parcel waiting at the locker back onto the van
         history = json.loads(row["history"] or "[]")
         history.append({"ts": ts, "status": status, "text": text, "via": via})
         delivered_at = delivered_time(detail or text, ts, self.settings.tz) if status == "delivered" else None
@@ -493,6 +574,12 @@ class Deliveries:
             if not item:
                 continue
             expected = f" · expected {item['expected_text']}" if item["expected_text"] and item["status"] != "delivered" else ""
+            if item["status"] == "ready_to_collect":
+                await self.notifier.notify(
+                    f"📍 Ready to collect: {one_line(item['name'], 50)}", self.collect_text(item), 4,
+                    url=self.settings.public_url.rstrip("/") + "/#plan",
+                    dedupe=f"collect:{delivery_id}:{int(item['updated'])}", tags="round_pushpin", category="collections")
+                continue
             await self.notifier.notify(
                 f"{item['icon']} {one_line(item['name'], 50)}: {item['label']}",
                 f"{item['status_text']}{expected}", 4 if item["status"] in {"out_for_delivery", "attempted"} else 3,
@@ -500,6 +587,49 @@ class Deliveries:
                 dedupe=f"delivery:{delivery_id}:{item['status']}:{int(item['updated'])}", tags="package",
                 category="deliveries")
         return len(ids)
+
+    @staticmethod
+    def collect_text(item: dict) -> str:
+        bits = []
+        if item.get("collect_place"):
+            bits.append(f"At {item['collect_place']}")
+        if item.get("collect_code"):
+            bits.append(f"code {item['collect_code']}")
+        if item.get("collect_by_text"):
+            bits.append(f"collect by {item['collect_by_text']}")
+        return " · ".join(bits) or one_line(item.get("status_text") or "Ready to collect", 140)
+
+    def ready_lines(self) -> list[str]:
+        lines = []
+        for item in self.active():
+            if item["status"] != "ready_to_collect":
+                continue
+            who = item["name"] + (f" ({item['retailer']})" if item["retailer"] and item["retailer"] != item["name"] else "")
+            lines.append(f"📍 **{one_line(who, 70)}** — {self.collect_text(item)}")
+        return lines
+
+    async def collect_reminders(self) -> int:
+        """The day before (and the morning of) the last day to collect, if it's still waiting."""
+        tz = self.settings.tz
+        now = datetime.now(tz)
+        if now.hour < 9:
+            return 0
+        sent = 0
+        for item in self.active():
+            if item["status"] != "ready_to_collect" or not item.get("collect_by"):
+                continue
+            try:
+                left = (date.fromisoformat(item["collect_by"]) - now.date()).days
+            except ValueError:
+                continue
+            if left not in (0, 1):
+                continue
+            result = await self.notifier.notify(
+                f"📍 Collect {one_line(item['name'], 50)} {'today' if left == 0 else 'by tomorrow'}",
+                self.collect_text(item), 4, url=self.settings.public_url.rstrip("/") + "/#plan",
+                dedupe=f"collect-by:{item['id']}:{left}", tags="round_pushpin", category="collections")
+            sent += int(result != "duplicate")
+        return sent
 
     # ------------------------------------------------------------------ from chat
     def add_from_chat(self, text: str) -> dict:
@@ -600,7 +730,7 @@ class Deliveries:
         data = parcel_jsonld(message.html)
         status, evidence = classify(f"{message.subject}.\n{without_progress_bar(message.body[:3000])}")
         tracker = step_tracker(message.html)
-        if tracker:
+        if tracker and status != "ready_to_collect":  # "ready to collect" in the words beats the generic graphic
             status, evidence = tracker, f"{LABELS[tracker]} (from the email's progress tracker)"
         return data.get("status") or status, evidence
 
@@ -699,6 +829,7 @@ class Deliveries:
             checked += 1
             changed += int(bool(result.get("changed")))
         sent = await self.flush_notifications()
+        sent += await self.collect_reminders()
         named = await self.fill_items()
         active = self.db.one("SELECT COUNT(*) n FROM deliveries WHERE active = 1")["n"]
         return {"active": active, "checked": checked, "changed": changed, "notified": sent, "items_named": named}
@@ -717,7 +848,9 @@ class Deliveries:
                 continue
             who = item["name"] + (f" ({item['retailer']})" if item["retailer"] and item["retailer"] != item["name"] else "")
             bits = [item["label"] if item["status"] != "delivered" else f"Delivered {item['delivered_text']}"]
-            if item["expected_text"] and item["status"] != "delivered":
+            if item["status"] == "ready_to_collect":
+                bits.append(self.collect_text(item))
+            elif item["expected_text"] and item["status"] != "delivered":
                 bits.append(f"expected {item['expected_text']}")
             if item["carrier"]:
                 bits.append(item["carrier"])

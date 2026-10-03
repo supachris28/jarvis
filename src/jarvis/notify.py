@@ -57,6 +57,8 @@ CATEGORIES = {
     "home":      {"label": "Home actions",                    "on": True,  "quiet": True,  "chat": False},
     "saves":     {"label": "Notes saved to your vault",       "on": False, "quiet": True,  "chat": True},
     "deliveries": {"label": "Delivery updates",               "on": True,  "quiet": True,  "chat": False},
+    "collections": {"label": "Ready to collect (lockers, shops, Click & Collect)", "on": True, "quiet": True,
+                    "chat": True},
     "deadlines": {"label": "Renewals and deadlines",          "on": True,  "quiet": True,  "chat": False},
     "followups": {"label": "No reply yet to your emails",     "on": False, "quiet": True,  "chat": False},
     "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True, "chat": False},

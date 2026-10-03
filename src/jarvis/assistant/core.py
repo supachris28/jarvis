@@ -53,6 +53,9 @@ EVENING = re.compile(r"\b(evening (?:brief|preview)|tomorrow'?s (?:brief|preview
                      r"prepare (?:me )?for tomorrow|ready for tomorrow|what do i need (?:for|to know about) tomorrow)\b",
                      re.IGNORECASE)
 
+COLLECT_QUESTION = re.compile(r"\b(?:anything|what|parcels?|packages?|orders?)\b.{0,30}\b(?:to (?:collect|pick up)|"
+                              r"ready (?:to|for) (?:collect(?:ion)?|pick ?up))\b|\b(?:collection|locker|pick ?up) code\b",
+                              re.I)
 DEADLINE_QUESTION = re.compile(r"\b(renewals?|deadlines?|due dates?|returns? (?:by|due|deadline)|bills? due|"
                                r"what(?:'s| is) (?:due|expiring|renewing)|anything (?:due|expiring|renewing))\b", re.I)
 WAITING_QUESTION = re.compile(r"\b(?:who (?:hasn'?t|has not|didn'?t) (?:replied|got back|answered|responded)|"
@@ -281,6 +284,15 @@ class Assistant:
         if self.brief is not None and BRIEF.search(prompt):
             async for event in self.handle_brief(prompt):
                 yield event
+            return
+        if self.deliveries is not None and COLLECT_QUESTION.search(prompt):
+            lines = self.deliveries.ready_lines()
+            text = ("**Ready to collect**\n" + "\n".join(f"- {line}" for line in lines)) if lines else \
+                "Nothing waiting to be collected."
+            yield {"type": "meta", "route": "deliveries"}
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
             return
         if self.deliveries is not None and (TRACK.match(prompt) or DELIVERY_QUESTION.search(prompt)
                                             or LOOK_BACK.search(prompt)):

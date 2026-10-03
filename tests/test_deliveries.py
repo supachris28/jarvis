@@ -266,3 +266,64 @@ class DeliveryTests(IntegrationBase):
         async def history(start):
             return ids, "2"
         return history
+
+
+class CollectionTests(IntegrationBase):
+    def test_ready_to_collect(self):
+        from datetime import datetime, timedelta
+        s = self.services
+        n = s.notifier
+        self.settings.notify_quiet_hours = "00:00-00:01"  # not quiet now
+        tz = self.settings.tz
+        tomorrow = datetime.now(tz).date() + timedelta(days=1)
+        dispatched = gmail_message("c1", "tc1", "InPost <noreply@inpost.co.uk>", "Your parcel is on its way",
+                                   "Your parcel from Hobbycraft has been dispatched. Tracking number: 6912345678901234567890",
+                                   ts=time.time() - 86400)
+        ready = gmail_message(
+            "c2", "tc1", "InPost <noreply@inpost.co.uk>", "Your parcel is ready to collect",
+            "Good news! Your parcel from Hobbycraft has been delivered to the locker and is ready to collect from "
+            "the InPost Locker at Tesco Extra, Hagley Road. Your collection code is 482915. "
+            f"Collect it by {tomorrow:%d/%m/%Y}.", ts=time.time() - 60)
+        click = gmail_message("c3", "tc3", "Boots <orders@boots.com>", "Your Click & Collect order is ready",
+                              "Your Click & Collect order is ready.\nCollect from: Boots, New Street, Birmingham\n"
+                              "Please bring your order number 12345678.")
+        for message in (dispatched, ready, click):
+            s.deliveries.on_message(parse_message(message, 8000))
+        items = {d["thread_id"]: d for d in s.deliveries.active()}
+        locker = items["tc1"]
+        self.assertEqual((locker["status"], locker["label"], locker["icon"]), ("ready_to_collect", "Ready to collect", "📍"))
+        self.assertEqual((locker["collect_place"], locker["collect_code"], locker["collect_by_text"]),
+                         ("InPost Locker at Tesco Extra, Hagley Road", "482915", "tomorrow"))
+        self.assertEqual(items["tc3"]["status"], "ready_to_collect")
+        self.assertEqual(items["tc3"]["collect_place"], "Boots, New Street, Birmingham")
+        # its own notification category, posted in the chat too (chat is on by default for collections)
+        self.assertTrue(n.preferences()["collections"]["chat"])
+        self.run_async(s.deliveries.flush_notifications())
+        row = s.db.one("SELECT title, message FROM notifications WHERE title LIKE '📍 Ready to collect%' "
+                       "AND message LIKE '%482915%'")
+        self.assertEqual(row["message"], "At InPost Locker at Tesco Extra, Hagley Road · code 482915 · collect by tomorrow")
+        self.assertTrue(s.db.one("SELECT 1 FROM chat_messages WHERE role = 'activity' AND content LIKE '%Ready to collect%'"))
+        # last-day reminder (collect by tomorrow), once
+        if datetime.now(tz).hour >= 9:
+            self.assertEqual(self.run_async(s.deliveries.collect_reminders()), 1)
+            self.assertEqual(self.run_async(s.deliveries.collect_reminders()), 0)
+        # switching the category's chat tick off keeps it out of the chat
+        n.set_preferences({"collections": {"chat": False}})
+        self.assertFalse(n.in_chat("collections"))
+        # listed in the brief and answered in chat
+        brief = self.run_async(s.brief.build(with_opener=False))
+        self.assertIn("**Ready to collect**", brief)
+        self.assertIn("code 482915", brief)
+
+        async def ask(text):
+            return "".join(e.get("text", "") for e in [e async for e in s.assistant.handle(text)] if e["type"] == "token")
+        answer = self.run_async(ask("Anything to collect?"))
+        self.assertIn("InPost Locker", answer)
+        self.assertIn("Boots, New Street", answer)
+        # collected → done
+        done = gmail_message("c4", "tc1", "InPost <noreply@inpost.co.uk>", "Thanks for collecting",
+                             "Thanks for collecting your parcel from the locker. Tracking number: 6912345678901234567890")
+        s.deliveries.on_message(parse_message(done, 8000))
+        collected = s.deliveries.get(locker["id"])
+        self.assertEqual((collected["status"], collected["label"].split()[0]), ("delivered", "Collected"))
+        self.assertEqual(classify("We'll email you when it's ready to collect.")[0], "")

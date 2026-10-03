@@ -227,6 +227,9 @@ class Brief:
             parcels = self.deliveries.summary_lines(only_today=True)
             if parcels:
                 sections.append(("Deliveries today", parcels))
+            waiting = self.deliveries.ready_lines()
+            if waiting:
+                sections.append(("Ready to collect", waiting))
         birthdays = await self.birthdays(today)
         if birthdays:
             sections.append(("Birthdays this week", birthdays))
@@ -279,6 +282,9 @@ class Brief:
             parcels = self.deliveries.summary_lines(on_day=tomorrow.isoformat())
             if parcels:
                 sections.append(("Parcels expected", parcels))
+            waiting = self.deliveries.ready_lines()
+            if waiting:
+                sections.append(("Ready to collect", waiting))
         birthdays = [line.replace(" — today", " — tomorrow") for line in await self.birthdays(tomorrow, days=0)]
         if birthdays:
             sections.append(("Birthdays", birthdays))

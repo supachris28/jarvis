@@ -289,7 +289,9 @@ class Database:
                                          "target_event_id": "TEXT NOT NULL DEFAULT ''"},  # note: event to update
                      "event_scan": {"automated": "INTEGER NOT NULL DEFAULT 0"},
                      "scheduled": {"decided": "REAL"},
-                     "deliveries": {"item_checked": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "REAL"}}
+                     "deliveries": {"item_checked": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "REAL",
+                                    "collect_place": "TEXT NOT NULL DEFAULT ''", "collect_code": "TEXT NOT NULL DEFAULT ''",
+                                    "collect_by": "TEXT NOT NULL DEFAULT ''"}}
         for table, columns in additions.items():
             existing = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
             for name, definition in columns.items():

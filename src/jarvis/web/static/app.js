@@ -940,9 +940,13 @@ function deliveryCard(d) {
   const steps = (d.history || []).slice().reverse().map((h) =>
     `<li><span class="muted small">${esc(when(h.ts))}</span> ${esc(h.text)} <span class="muted small">(${esc(h.via)})</span></li>`).join("");
   el.innerHTML = `
-    <div class="p-title">${d.icon} ${esc(d.name)} <span class="tag ${d.status === "delivered" ? "ok" : ["attempted", "delayed"].includes(d.status) ? "warn" : ""}">${esc(d.label)}</span></div>
+    <div class="p-title">${d.icon} ${esc(d.name)} <span class="tag ${d.status === "delivered" ? "ok" : ["attempted", "delayed", "ready_to_collect"].includes(d.status) ? "warn" : ""}">${esc(d.label)}</span></div>
     <div class="small">${esc(d.status_text)}</div>
     ${d.status === "delivered" && d.delivered_text ? `<div class="small"><strong>Delivered ${esc(d.delivered_text)}</strong></div>` : ""}
+    ${d.status === "ready_to_collect" ? `<div class="collect">
+      ${d.collect_place ? `<div>📍 <strong>${esc(d.collect_place)}</strong></div>` : ""}
+      ${d.collect_code ? `<div>Code <span class="collect-code">${esc(d.collect_code)}</span></div>` : ""}
+      ${d.collect_by_text ? `<div class="small">Collect by <strong>${esc(d.collect_by_text)}</strong></div>` : ""}</div>` : ""}
     <div class="muted small">${d.expected_text && d.status !== "delivered" ? `Expected ${esc(d.expected_text)} · ` : ""}${esc(meta)}${d.checked_text ? ` · checked ${esc(d.checked_text)}` : ""}</div>
     ${d.poll_note ? `<div class="muted small">${esc(d.poll_note)}</div>` : ""}
     ${steps ? `<details><summary class="small">History</summary><ul class="small">${steps}</ul></details>` : ""}
@@ -950,7 +954,7 @@ function deliveryCard(d) {
       ${d.tracking_url ? `<a class="button ghost" href="${esc(d.tracking_url)}" target="_blank" rel="noopener">Tracking page</a>` : ""}
       ${d.thread_id ? `<a class="button ghost" href="#email?thread=${esc(d.thread_id)}">Email</a>` : ""}
       ${d.tracking_url && d.status !== "delivered" ? '<button class="ghost" data-dact="check">Check now</button>' : ""}
-      <button class="ghost" data-dact="archive">${d.status === "delivered" ? "Done" : "Stop tracking"}</button>
+      <button class="ghost" data-dact="archive">${d.status === "delivered" ? "Done" : d.status === "ready_to_collect" ? "Collected" : "Stop tracking"}</button>
     </div><div class="p-status small"></div>`;
   return el;
 }

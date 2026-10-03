@@ -227,3 +227,7 @@ header { position: relative; }
 .composer .mic.on { background: var(--bad); color: #fff; border-color: var(--bad); animation: mic-pulse 1.2s infinite; }
 @keyframes mic-pulse { 50% { opacity: .7; } }
 @media (prefers-reduced-motion: reduce) { .composer .mic.on { animation: none; } }
+
+/* ready to collect */
+.delivery .collect { margin: .4rem 0; padding: .5rem .7rem; border-radius: 10px; background: var(--bg); display: grid; gap: .2rem; }
+.collect-code { font: 600 1.25rem/1.2 ui-monospace, Consolas, monospace; letter-spacing: .12em; user-select: all; }
