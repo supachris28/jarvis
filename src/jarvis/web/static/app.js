@@ -1011,6 +1011,11 @@ async function loadPerson(path) {
   $("#person-brief").innerHTML = markdown(p.briefing || "");
   $("#person-form").innerHTML = personForm(p, false);
   $("#person-form").dataset.path = path;
+  $("#person-suggest").innerHTML = (p.suggestions || []).map((g) => `<div class="card suggestion" data-target="${esc(g.target)}"
+      data-children='${esc(JSON.stringify(g.children))}'>
+      <div>${esc(g.text)}</div>
+      <div class="toolbar"><button type="button" data-family="yes">Yes, add ${g.children.length > 1 ? "them" : esc(g.children[0].name.split(" ")[0])}</button>
+        <button type="button" class="ghost" data-family="no">No</button></div></div>`).join("");
   const more = [];
   if (p.upcoming.length) more.push(`<div class="card"><strong>Coming up</strong><ul>${p.upcoming.map((e) => `<li>${esc(e.start.slice(0, 16).replace("T", " "))} — ${esc(e.summary)}</li>`).join("")}</ul></div>`);
   if (p.emails.length) more.push(`<div class="card"><strong>Recent email</strong><ul>${p.emails.map((e) => `<li><a href="${esc(e.email_url)}">${esc(e.subject || "(no subject)")}</a> <span class="muted small">${esc(e.when)}</span></li>`).join("")}</ul></div>`);
@@ -1021,6 +1026,19 @@ $("#person-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const path = event.target.dataset.path;
   if (await savePerson(event.target, path)) setTimeout(() => loadPerson(path), 500);
+});
+$("#person-suggest").addEventListener("click", async (event) => {
+  const answer = event.target.closest("[data-family]")?.dataset.family;
+  if (!answer) return;
+  const card = event.target.closest(".suggestion");
+  const children = JSON.parse(card.dataset.children);
+  card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  const body = answer === "yes" ? { path: card.dataset.target, children: children.map((c) => c.name) }
+                                : { path: card.dataset.target, not_children: children.map((c) => c.path) };
+  const r = await api("/api/people", { method: "POST", body: JSON.stringify(body) });
+  if (!r.ok) { card.querySelectorAll("button").forEach((b) => { b.disabled = false; }); return; }
+  card.remove();
+  if (answer === "yes") loadPerson($("#person-form").dataset.path);
 });
 $("#person-back").addEventListener("click", () => { location.hash = "#people"; });
 

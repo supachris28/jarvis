@@ -251,7 +251,51 @@ class People:
         added = [line[2:] for line in body.splitlines() if re.match(r"- \d{4}-\d\d-\d\d \d\d:\d\d — ", line)][-3:]
         return item | {"emails": [{**e, "email_url": f"/#email?thread={e['thread_id']}"} for e in emails],
                        "upcoming": upcoming, "tasks": tasks[:5], "recent_notes": added,
+                       "suggestions": await self.family_suggestions(path, props),
                        "properties": {k: props.get(k) for k in FIELDS if props.get(k)}}
+
+    async def family_suggestions(self, path: str, props: dict | None = None) -> list[dict]:
+        """Children a partner probably shares: Ben has Sam and Lily, so are they Emily's too? Shown on Emily's, Ben's
+        and the children's pages; only ever suggested (they may be step-children), and 'no' is remembered."""
+        notes = await self.notes()
+        if props is None:
+            props = notes.get(path, {})
+        no = set(self.db.get("people.not_children") or [])
+        name = lambda p: p.rsplit("/", 1)[-1].removesuffix(".md")   # noqa: E731
+        kids = lambda p: linked_paths((props if p == path else notes.get(p, {})).get("children"))   # noqa: E731
+        pairs: list[tuple[str, str]] = []   # (parent to add to, from their partner)
+        for partner in linked_paths(props.get("partner")):
+            if partner in notes:
+                pairs += [(path, partner), (partner, path)]
+        for parent in linked_paths(props.get("parents")):   # this person's parent's partner
+            for partner in linked_paths(notes.get(parent, {}).get("partner")):
+                if partner in notes and partner != path:
+                    pairs.append((partner, parent))
+        out, seen = [], set()
+        for target, via in pairs:
+            have = set(kids(target))
+            missing = [c for c in kids(via) if c not in have and c != target and c in notes
+                       and f"{target}|{c}" not in no and (target, c) not in seen]
+            if path not in (target, via):     # on a child's page: just this child
+                missing = [c for c in missing if c == path]
+            if not missing:
+                continue
+            seen.update((target, c) for c in missing)
+            names = [name(c) for c in missing]
+            short = [n.split()[0] for n in names]
+            listed = short[0] if len(short) == 1 else ", ".join(short[:-1]) + " and " + short[-1]
+            plural = len(names) > 1
+            out.append({"target": target, "target_name": name(target), "via": via, "via_name": name(via),
+                        "children": [{"path": c, "name": n} for c, n in zip(missing, names)],
+                        "text": f"{name(via).split()[0]} has {listed}. {'Are they' if plural else 'Is'} "
+                                f"{'' if plural else listed + ' '}{name(target).split()[0]}'s "
+                                f"{'children' if plural else 'child'} too?"})
+        return out
+
+    def dismiss_children(self, target: str, children: list[str]) -> None:
+        no = list(self.db.get("people.not_children") or [])
+        no += [f"{target}|{c}" for c in children if f"{target}|{c}" not in no]
+        self.db.set("people.not_children", no[-500:])
 
     # ---------------------------------------------------------------- writing
     async def resolve(self, name: str, family: str = "", create: bool = True) -> str | None:

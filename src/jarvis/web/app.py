@@ -439,6 +439,9 @@ async def person_update(request: Request) -> Response:
     fields = {k: body.get(k) for k in ("relation", "family", "birthday", "partner", "children", "parents", "phone")
               if k in body}
     try:
+        if body.get("not_children") and _person_path(str(body.get("path", ""))):
+            people.dismiss_children(body["path"], [c for c in body["not_children"] if _person_path(str(c))][:20])
+            return JSONResponse({"ok": True})
         if body.get("skip") and _person_path(str(body.get("path", ""))):
             people.skip(body["path"])
             return JSONResponse({"ok": True})

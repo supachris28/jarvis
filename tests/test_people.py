@@ -64,6 +64,30 @@ class PeopleTests(IntegrationBase):
         # every change can be undone from the Vault tab
         self.assertTrue(s.db.one("SELECT 1 FROM note_history WHERE path = 'People/Ben Topliss.md'"))
 
+    def test_partner_children_suggested(self):
+        s = self.services
+        self.run_async(s.people.update("People/Ben Topliss.md", {"family": "Topliss", "children": "Sam, Lily"}))
+        self.run_async(s.people.update("People/Ben Topliss.md", {"partner": "Emily Topliss"}))
+        emily = self.run_async(s.people.person("People/Emily Topliss.md"))
+        [g] = emily["suggestions"]
+        self.assertEqual((g["target"], [c["name"] for c in g["children"]]),
+                         ("People/Emily Topliss.md", ["Sam Topliss", "Lily Topliss"]))
+        self.assertEqual(g["text"], "Ben has Sam and Lily. Are they Emily's children too?")
+        ben = self.run_async(s.people.person("People/Ben Topliss.md"))
+        self.assertEqual([g["target"] for g in ben["suggestions"]], ["People/Emily Topliss.md"], "shown on Ben's page too")
+        sam = self.run_async(s.people.person("People/Sam Topliss.md"))
+        [g] = sam["suggestions"]
+        self.assertEqual((g["target"], [c["name"] for c in g["children"]]), ("People/Emily Topliss.md", ["Sam Topliss"]))
+        self.assertEqual(g["text"], "Ben has Sam. Is Sam Emily's child too?")
+        # Lily is a step-child: no; Sam: yes
+        s.people.dismiss_children("People/Emily Topliss.md", ["People/Lily Topliss.md"])
+        self.run_async(s.people.update("People/Emily Topliss.md", {"children": ["Sam Topliss"]}))
+        self.assertEqual(self.props("People/Sam Topliss.md")["parents"],
+                         ["[[People/Ben Topliss]]", "[[People/Emily Topliss]]"])
+        for page in ("Emily", "Ben", "Sam", "Lily"):
+            path = f"People/{page} Topliss.md"
+            self.assertEqual(self.run_async(s.people.person(path))["suggestions"], [], page)
+
     def test_api_and_skipping(self):
         app = create_app(self.settings, self.services, start_jobs=False)
         Auth(self.services.db).set_password("a very long password")

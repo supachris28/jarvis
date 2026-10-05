@@ -1,5 +1,8 @@
 # What's new in Jarvis
 
+## 0.18.3 — 5 October 2026
+- **Partners' children suggested.** When someone's partner has children who aren't on their page, Jarvis asks “Sam has Mia and Leo. Are they Alex's children too?” — on both partners' pages and the children's. *Yes* links them both ways; *No* (step-children, say) is remembered.
+
 ## 0.18.2 — 5 October 2026
 - Fixed: a person's page wouldn't open when their note had a date typed in Obsidian (e.g. `birthday: 1985-10-14`).
 
