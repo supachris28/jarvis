@@ -78,10 +78,22 @@ class PeopleTests(IntegrationBase):
             one = client.get("/api/people/one", params={"path": "People/Ben Topliss.md"}).json()
             self.assertEqual(one["emails"][0]["subject"], "Weekend plans 0")
             self.assertEqual(client.get("/api/people/one", params={"path": "../x.md"}).status_code, 404)
+            # dates typed in Obsidian are YAML dates, not strings
+            self.obsidian.files["People/Ada Lovelace.md"] = ("---\nbirthday: 1985-12-10\nmet: 2020-01-02 10:30:00\n"
+                                                             "aliases: [Ada]\n---\n# Ada\n")
+            ada = client.get("/api/people/one", params={"path": "People/Ada Lovelace.md"})
+            self.assertEqual(ada.status_code, 200)
+            self.assertEqual(ada.json()["properties"]["birthday"], "1985-12-10")
+            self.assertEqual(client.get("/api/people").status_code, 200)
             self.assertEqual(client.post("/api/people", json={"path": "Notes/x.md", "relation": "x"}, headers=h).status_code, 400)
             log = client.get("/api/changelog").json()
             self.assertTrue(log["markdown"].startswith("# What's new in Jarvis"))
             self.assertIn(f"## {log['version']}", log["markdown"], "the changelog has an entry for this version")
+        # the Nextcloud/files vault parses YAML itself, so dates arrive as dates
+        from jarvis.pipelines.people import plain
+        from datetime import date
+        self.assertEqual(plain({"birthday": date(1985, 12, 10), "kids": [{"born": date(2015, 1, 2)}]}),
+                         {"birthday": "1985-12-10", "kids": [{"born": "2015-01-02"}]})
 
     def test_before_you_meet(self):
         s = self.services

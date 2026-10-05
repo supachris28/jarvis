@@ -1,6 +1,6 @@
 // Minimal service worker: makes Jarvis installable and caches the app shell.
 // API calls always go to the network (personal data is never cached).
-const CACHE = "jarvis-shell-v41";
+const CACHE = "jarvis-shell-v42";
 const SHELL = ["/", "/static/app.js", "/static/lights.js", "/static/style.css", "/static/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

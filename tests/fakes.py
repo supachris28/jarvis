@@ -42,6 +42,7 @@ class FakeObsidian:
         if text.startswith("---\n"):
             end = text.index("\n---", 4)
             fm = yaml.safe_load(text[4:end]) or {}
+            fm = __import__("json").loads(__import__("json").dumps(fm, default=str))   # as the real API sends dates
         tags = list(fm.get("tags", []) or [])
         tags += [t for t in __import__("re").findall(r"(?<!\w)#([\w/-]+)", text) if t not in tags]
         return {"path": path, "content": text, "frontmatter": fm, "tags": tags, "stat": {}}

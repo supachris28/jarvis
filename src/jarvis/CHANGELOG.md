@@ -1,5 +1,8 @@
 # What's new in Jarvis
 
+## 0.18.2 — 5 October 2026
+- Fixed: a person's page wouldn't open when their note had a date typed in Obsidian (e.g. `birthday: 1985-10-14`).
+
 ## 0.18.1 — 5 October 2026
 - **Plan → Coming up**: the next 7 days, day by day, with who's in each event — from the invite's guests and from names in the title (“Coffee with Ben”, “Chris+Phil”).
 - People Jarvis knows link to their page; an amber ＋ means it's missing details (birthday, family, how you know them).

@@ -51,6 +51,17 @@ def display(value) -> list[str]:
     return out
 
 
+def plain(value):
+    """Frontmatter as JSON-safe values: YAML turns `birthday: 1985-10-14` into a date."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [plain(v) for v in value]
+    return value
+
+
 class People:
     def __init__(self, settings, db, vault, writer, assistant=None) -> None:
         self.settings = settings
@@ -66,7 +77,7 @@ class People:
         indexed = getattr(self.vault, "frontmatter_under", None)
         if indexed is not None:
             try:
-                return {path: props or {} for path, props in await indexed("People/") if path.endswith(".md")}
+                return {path: plain(props or {}) for path, props in await indexed("People/") if path.endswith(".md")}
             except VaultError:
                 pass
         try:
@@ -79,7 +90,7 @@ class People:
                         pending.append(path.rstrip("/"))
                     elif name.endswith(".md"):
                         note = await self.vault.get_note(path)
-                        found[path] = (note or {}).get("frontmatter") or {}
+                        found[path] = plain((note or {}).get("frontmatter") or {})
         except VaultError as error:
             diag.debug("people", f"couldn't list People notes: {error}")
         return found
@@ -212,7 +223,7 @@ class People:
         note = await self.vault.get_note(path)
         if note is None:
             return None
-        props = note.get("frontmatter") or {}
+        props = plain(note.get("frontmatter") or {})
         directory = {p["path"]: p for p in (await self.directory())["people"]}
         item = directory.get(path) or {"path": path, "name": path.rsplit("/", 1)[-1].removesuffix(".md")}
         addresses = [r["email"] for r in self.db.all("SELECT email FROM people WHERE path = ?", (path,))]
