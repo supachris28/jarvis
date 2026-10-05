@@ -867,6 +867,7 @@ async function loadPlan() {
   loadDeliveries();
   loadDeadlines();
   loadTasks();
+  loadMeetings();
   await loadEvents();
 }
 async function loadEvents() {
@@ -1022,6 +1023,65 @@ $("#person-form").addEventListener("submit", async (event) => {
   if (await savePerson(event.target, path)) setTimeout(() => loadPerson(path), 500);
 });
 $("#person-back").addEventListener("click", () => { location.hash = "#people"; });
+
+/* ---------- coming up: events and the people in them ---------- */
+async function loadMeetings() {
+  const [data, dir] = await Promise.all([api("/api/meetings").then((r) => r.json()), api("/api/people").then((r) => r.json())]);
+  $("#people-names").innerHTML = dir.people.map((p) => `<option value="${esc(p.name)}"></option>`).join("");
+  peopleData = dir;
+  const byDay = {};
+  data.meetings.forEach((m) => (byDay[m.day] ||= []).push(m));
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = iso(new Date());
+  const tomorrow = iso(new Date(Date.now() + 86400000));
+  $("#meeting-list").innerHTML = Object.entries(byDay).map(([day, items]) => {
+    const label = day === today ? "Today" : day === tomorrow ? "Tomorrow"
+      : new Date(day + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    return `<div class="card meeting-day"><strong>${esc(label)}</strong>${items.map((m) => `
+      <div class="meeting" data-event="${esc(m.event_id)}">
+        <div><span class="m-time">${esc(m.time || "All day")}</span> ${esc(m.title)}${m.location ? ` <span class="muted small">· ${esc(m.location)}</span>` : ""}</div>
+        ${m.people.length || m.unknown.length ? `<div class="chips">
+          ${m.people.map((p) => `<a class="chip ${p.missing.length ? "needs" : ""}" href="#people?p=${encodeURIComponent(p.path)}"
+              title="${p.missing.length ? esc("Add " + p.missing.join(", ")) : esc(p.relation || "Open")}">${esc(p.name)}${p.missing.length ? " <b>＋</b>" : ""}</a>`).join("")}
+          ${m.unknown.map((u) => `<button type="button" class="chip unknown" data-name="${esc(u.name)}" data-email="${esc(u.email)}"
+              title="Who's this?">${esc(u.name)}?</button>`).join("")}
+        </div>` : ""}
+        <div class="who hidden"></div>
+      </div>`).join("")}</div>`;
+  }).join("") || '<p class="muted">Nothing in the calendar for the next 7 days.</p>';
+}
+$("#meeting-list").addEventListener("click", async (event) => {
+  const chip = event.target.closest(".chip.unknown");
+  if (chip) {
+    const box = chip.closest(".meeting").querySelector(".who");
+    const name = chip.dataset.name;
+    box.classList.remove("hidden");
+    box.dataset.name = name;
+    box.innerHTML = `<div class="small"><strong>Who's ${esc(name)}?</strong> Pick someone you've got, or add them.</div>
+      <div class="toolbar"><input list="people-names" placeholder="Name" value="${esc(name)}">
+        <button type="button" data-who="link">This person</button>
+        <button type="button" class="ghost" data-who="new">New person</button>
+        <button type="button" class="ghost" data-who="not">Not a person</button></div><span class="muted small" data-status></span>`;
+    box.querySelector("input").select();
+    return;
+  }
+  const action = event.target.closest("[data-who]")?.dataset.who;
+  if (!action) return;
+  const box = event.target.closest(".who");
+  const typed = box.querySelector("input").value.trim();
+  const match = (peopleData ? peopleData.people : []).find((p) => p.name.toLowerCase() === typed.toLowerCase());
+  let body;
+  if (action === "not") body = { name: box.dataset.name, not_person: true };
+  else if (action === "link") {
+    if (!match) { box.querySelector("[data-status]").textContent = `No one called “${typed}” yet — use New person.`; return; }
+    body = { name: box.dataset.name, path: match.path };
+  } else body = { name: typed || box.dataset.name, create: true };
+  const r = await api("/api/people/link", { method: "POST", body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) { box.querySelector("[data-status]").textContent = data.error || "Couldn't save."; return; }
+  if (action === "new" && data.path) { location.hash = `#people?p=${encodeURIComponent(data.path)}`; return; }
+  loadMeetings();
+});
 
 /* ---------- to-dos and shopping ---------- */
 async function loadTasks() {

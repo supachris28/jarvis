@@ -99,3 +99,42 @@ class PeopleTests(IntegrationBase):
         self.assertIn("Family: Emily Topliss", row["message"])
         self.assertIn("Your to-dos: Return Ben's drill", row["message"])
         self.assertEqual(self.run_async(s.people.meeting_prep(s.notifier)), 0, "once per event")
+
+
+class MeetingTests(PeopleTests):
+    def test_plan_shows_meetings_with_their_people(self):
+        from jarvis.pipelines.people import upcoming_meetings
+        s = self.services
+        s.db.execute("UPDATE emails SET from_name = 'Chris Key' WHERE outgoing = 1")
+        tz = self.settings.tz
+        day = datetime.now(tz).date() + timedelta(days=2)
+
+        def event(eid, title, hour, attendees="[]"):
+            start = datetime(day.year, day.month, day.day, hour, 0, tzinfo=tz)
+            s.db.execute("INSERT INTO events (event_id, calendar_id, path, summary, start, end, all_day, location, "
+                         "description, attendees, status, updated, html_link) VALUES (?, 'primary', 'x.md', ?, ?, ?, 0, "
+                         "'', '', ?, 'confirmed', '1', '')", (eid, title, start.isoformat(),
+                                                             (start + timedelta(hours=1)).isoformat(), attendees))
+        event("e1", "Chris+Phil+Casper🐕", 7)
+        event("e2", "Wine and Zoom with Ben", 20)
+        event("e3", "Prayer meeting", 19, '[{"email": "emily@example.com", "name": "Emily"}, '
+                                          '{"email": "new@example.com", "name": "Grace Hopper"}]')
+        meetings = {m["event_id"]: m for m in self.run_async(upcoming_meetings(s.people))}
+        self.assertEqual([u["name"] for u in meetings["e1"]["unknown"]], ["Phil", "Casper"], "not Chris (that's you)")
+        self.assertEqual([p["name"] for p in meetings["e2"]["people"]], ["Ben Topliss"])
+        self.assertEqual(meetings["e2"]["people"][0]["missing"], ["how you know them", "birthday", "family"])
+        self.assertEqual([p["name"] for p in meetings["e3"]["people"]], ["Emily Topliss"])
+        self.assertEqual(meetings["e3"]["unknown"], [{"name": "Grace Hopper", "email": "new@example.com"}])
+        # Phil is a new person, Casper is the dog; 'Benny' becomes one of Ben's names
+        created = self.run_async(s.people.link_name("Phil", create=True))
+        self.assertEqual(created["path"], "People/Phil.md")
+        self.run_async(s.people.link_name("Casper", not_person=True))
+        meetings = {m["event_id"]: m for m in self.run_async(upcoming_meetings(s.people))}
+        self.assertEqual([p["name"] for p in meetings["e1"]["people"]], ["Phil"])
+        self.assertEqual(meetings["e1"]["unknown"], [])
+        event("e4", "Coffee with Benny", 11)
+        self.assertEqual([u["name"] for u in {m["event_id"]: m for m in self.run_async(upcoming_meetings(s.people))}["e4"]["unknown"]], ["Benny"])
+        self.run_async(s.people.link_name("Benny", "People/Ben Topliss.md"))
+        self.assertIn("Benny", self.props("People/Ben Topliss.md")["aliases"])
+        meetings = {m["event_id"]: m for m in self.run_async(upcoming_meetings(s.people))}
+        self.assertEqual([p["name"] for p in meetings["e4"]["people"]], ["Ben Topliss"])

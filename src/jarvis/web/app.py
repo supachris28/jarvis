@@ -452,6 +452,28 @@ async def person_update(request: Request) -> Response:
         return JSONResponse({"error": str(error)}, status_code=503)
 
 
+async def meetings_list(request: Request) -> Response:
+    from ..pipelines.people import upcoming_meetings
+    days = min(31, max(1, int(request.query_params.get("days", "7") or 7)))
+    return JSONResponse({"meetings": await upcoming_meetings(request.app.state.services.people, days)})
+
+
+async def people_link(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    path = str(body.get("path", ""))
+    if path and not _person_path(path):
+        return JSONResponse({"error": "Unknown person."}, status_code=400)
+    try:
+        return JSONResponse(await request.app.state.services.people.link_name(
+            str(body.get("name", "")), path, bool(body.get("create")), bool(body.get("not_person"))))
+    except VaultError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
 async def tasks_list(request: Request) -> Response:
     tasks = request.app.state.services.tasks
     shopping, where, problem = [], "", ""
@@ -1007,6 +1029,8 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/changelog", changelog),
             Route("/api/people", people_list),
             Route("/api/people/one", person_detail),
+            Route("/api/people/link", people_link, methods=["POST"]),
+            Route("/api/meetings", meetings_list),
             Route("/api/people", person_update, methods=["POST"]),
             Route("/api/tasks", tasks_list),
             Route("/api/tasks", tasks_add, methods=["POST"]),

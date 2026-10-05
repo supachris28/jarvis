@@ -327,3 +327,17 @@ a.whatsnew-link:hover { border-color: var(--accent); }
   .task .row-actions { margin-left: auto; }
   nav a { padding: .35em .32em; font-size: .88rem; }
 }
+
+/* coming up */
+.meeting-day { display: grid; gap: .55rem; }
+.meeting { display: grid; gap: .3rem; padding-top: .45rem; border-top: 1px solid var(--line); }
+.meeting-day > strong + .meeting { border-top: 0; padding-top: 0; }
+.m-time { font-variant-numeric: tabular-nums; font-weight: 600; margin-right: .3rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.chip { display: inline-flex; align-items: center; gap: .25rem; font-size: .82rem; padding: .2rem .65rem; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--accent); text-decoration: none; line-height: 1.4; }
+.chip.needs { border-color: var(--warn); }
+.chip.needs b { color: var(--warn); font-weight: 700; }
+.chip.unknown { border-style: dashed; color: var(--muted); background: transparent; cursor: pointer; }
+.meeting .who { padding: .5rem; border-radius: 10px; background: var(--bg); }
+.meeting .who input { flex: 1 1 160px; }

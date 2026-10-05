@@ -1,5 +1,10 @@
 # What's new in Jarvis
 
+## 0.18.1 — 5 October 2026
+- **Plan → Coming up**: the next 7 days, day by day, with who's in each event — from the invite's guests and from names in the title (“Coffee with Ben”, “Chris+Phil”).
+- People Jarvis knows link to their page; an amber ＋ means it's missing details (birthday, family, how you know them).
+- Names it can't place show as “Phil?”: tap to say who it is (the name is remembered as an alias), add a new person, or mark it *not a person* (the dog).
+
 ## 0.18.0 — 5 October 2026
 - **To-do list.** Say or type “I need to sort the boiler service (by Friday)”. Tick, snooze and add in Plan → To do; today's and overdue ones are in the morning brief, tomorrow's in the evening preview. Mirrored to *Jarvis/To do.md*.
 - **Shopping list** in Home Assistant's to-do list (on your phone in the shop): “add milk, eggs and bread to the shopping list”, “what's on the shopping list?”, “tick off milk”.

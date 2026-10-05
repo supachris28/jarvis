@@ -413,3 +413,168 @@ class People:
                 dedupe=f"prep:{row['event_id']}:{row['start']}", tags="busts_in_silhouette", category="people")
             sent += int(result != "duplicate")
         return sent
+
+
+# ---------------------------------------------------------------- people in calendar events
+NOT_NAMES = frozenset("""
+zoom teams meet meeting call facetime skype lunch dinner breakfast brunch coffee drinks tea supper party birthday
+happy prayer church service school college work office training group rehearsal practice class lesson session club
+team gym swim swimming football rugby cricket tennis golf run running walk bowling cinema film theatre musical show
+concert gig match game quiz church home house garden doctor doctors dentist hospital appointment vet haircut
+monday tuesday wednesday thursday friday saturday sunday january february march april may june july august
+september october november december today tomorrow tonight morning afternoon evening night weekend week
+the and with for from at in on to of a an my our your their his her catch up catchup visit trip holiday
+youth night out drop pick up collection booking reservation confirmed your mailbox carter miller
+""".split())
+CONNECTOR = re.compile(r"\b(?:with|w/|feat\.?)\s+(?P<names>.+?)(?:\s+(?:at|in|@|for|re|about|-|–|—)\s+.*)?$", re.I)
+NAME = re.compile(r"[A-Z][a-z'’-]+(?:\s+(?:[A-Z][a-z'’-]+))?")
+
+
+def title_names(title: str, me: set[str] = frozenset()) -> list[str]:
+    """Names that look like people in an event title: 'Coffee with Ben and Emily', 'Chris+Phil+Casper',
+    'Sophie@Hippodrome', 'Call Dave'. Ordinary words (Lunch, Zoom, Church…) and your own name are left out."""
+    text = re.sub(r"[^\w\s'’+&@,/.\-–—]", " ", title or "")
+    segments: list[str] = []
+    match = CONNECTOR.search(text)
+    if match:
+        segments.append(match.group("names"))
+    if "+" in text:
+        segments.append(text)
+    at = re.match(r"^\s*([A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+)?)\s*@", text)
+    if at:
+        segments.append(at.group(1))
+    call = re.match(r"^\s*(?:call|ring|phone|facetime|zoom|meet|see|visit)\s+(?!with\b)([A-Z][\w'’-]+(?:\s+[A-Z][\w'’-]+)?)", text, re.I)
+    if call:
+        segments.append(call.group(1))
+    names: list[str] = []
+    for segment in segments:
+        for part in re.split(r"\s*(?:\+|&|,|/|\band\b)\s*", segment):
+            found = NAME.match(part.strip())
+            if not found:
+                continue
+            words = [w for w in found.group(0).split() if w.casefold() not in NOT_NAMES]
+            if not words or words[0].casefold() in NOT_NAMES:
+                continue
+            name = " ".join(words)
+            if name.casefold() in me or name.split()[0].casefold() in me:
+                continue
+            if name not in names:
+                names.append(name)
+    return names[:6]
+
+
+async def upcoming_meetings(people: People, days: int = 7) -> list[dict]:
+    """Calendar events in the next `days` days, each with the people in it: linked to their notes where Jarvis can
+    tell who they are (attendees, names and aliases in the title), and names it can't place yet to link or add."""
+    from ..assistant.agenda import events_between
+    tz = people.settings.tz
+    now = datetime.now(tz)
+    first, after = now.date(), now.date() + timedelta(days=days)
+    rows = [dict(r) for r in people.db.all(
+        "SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? ORDER BY start",
+        ((after + timedelta(days=1)).isoformat(), (first - timedelta(days=1)).isoformat()))]
+    events = [e for e in events_between(rows, first, after, tz) if e["local_end"] > now]
+    addresses = {r["email"]: r["path"] for r in people.db.all("SELECT email, path FROM people")}
+    index = await people.assistant.people_index() if people.assistant is not None else []
+    directory = {p["path"]: p for p in (await people.directory())["people"]}
+    me = people.me_names()
+    ignored = {n.casefold() for n in (people.db.get("people.not_names") or [])}
+    aliases = {n.casefold(): p for n, p in index}
+    firsts: dict[str, set] = {}
+    for path, props in (await people.notes()).items():     # People notes directly: titles, first names, aliases
+        title_name = path.rsplit("/", 1)[-1].removesuffix(".md")
+        aliases.setdefault(title_name.casefold(), path)
+        firsts.setdefault(title_name.split()[0].casefold(), set()).add(path)
+        extra = props.get("aliases") or []
+        for alias in ([extra] if isinstance(extra, str) else extra):
+            if isinstance(alias, str) and alias.strip():
+                aliases.setdefault(alias.strip().casefold(), path)
+    for first, paths in firsts.items():
+        if len(paths) == 1:
+            aliases.setdefault(first, next(iter(paths)))
+    out = []
+    for event in events:
+        title = event.get("summary") or ""
+        try:
+            attendees = json.loads(event.get("attendees") or "[]")
+        except (TypeError, ValueError):
+            attendees = []
+        linked: dict[str, str] = {}
+        unknown: list[dict] = []
+        for a in attendees:
+            address = (a.get("email") or "").casefold()
+            if a.get("self") or not address or address.endswith("calendar.google.com"):
+                continue
+            if address in addresses:
+                linked.setdefault(addresses[address], "attendee")
+            elif (a.get("name") or address).casefold() not in ignored:
+                unknown.append({"name": a.get("name") or address.split("@")[0], "email": address})
+        for path, why in (people.assistant.match_people(title, index) if people.assistant is not None else []):
+            linked.setdefault(path, why)
+        linked_full = {directory.get(p, {}).get("name", p.rsplit("/", 1)[-1].removesuffix(".md")).casefold() for p in linked}
+        linked_words = {w for n in linked_full for w in n.split()}
+        for name in title_names(title, me):
+            key = name.casefold()
+            if key in ignored or key in linked_full or (" " not in key and key in linked_words):
+                continue
+            if key in aliases:
+                linked.setdefault(aliases[key], "alias")
+                continue
+            if not any(u["name"].casefold() == key for u in unknown):
+                unknown.append({"name": name, "email": ""})
+        start = event["local_start"]
+        out.append({
+            "event_id": event.get("event_id", ""), "title": title, "all_day": event["all_day"],
+            "day": start.date().isoformat(), "time": "" if event["all_day"] else f"{start:%H:%M}",
+            "location": event.get("location") or "", "html_link": event.get("html_link") or "",
+            "people": [{"path": p, "name": directory.get(p, {}).get("name") or p.rsplit("/", 1)[-1].removesuffix(".md"),
+                        "missing": directory.get(p, {}).get("missing", []),
+                        "relation": directory.get(p, {}).get("relation", "")} for p in linked],
+            "unknown": unknown[:6]})
+    return out
+
+
+def _me_names(self: People) -> set[str]:
+    """Your own name (from the emails you send), so 'Chris+Phil' isn't about you."""
+    row = self.db.one("SELECT from_name, COUNT(*) n FROM emails WHERE outgoing = 1 AND from_name != '' "
+                      "GROUP BY from_name ORDER BY n DESC LIMIT 1")
+    names = set()
+    if row and row["from_name"]:
+        names |= {row["from_name"].casefold(), row["from_name"].split()[0].casefold()}
+    me = (self.db.get("gmail.me") or "").split("@")[0].replace(".", " ").casefold()
+    if me:
+        names |= {me, me.split()[0]}
+    return names or {"me"}
+
+
+async def _link_name(self: People, name: str, path: str = "", create: bool = False, not_person: bool = False) -> dict:
+    """Who a name in your calendar is: an existing person (the name is added to their aliases, so it's recognised
+    from now on), a new person, or not a person at all ('Casper' the dog)."""
+    name = re.sub(r"\s+", " ", name).strip()[:80]
+    if not name:
+        raise VaultError("A name is needed.")
+    if not_person:
+        names = list(self.db.get("people.not_names") or [])
+        if name not in names:
+            names.append(name)
+        self.db.set("people.not_names", names[-300:])
+        return {"ok": True}
+    if create:
+        path = await self.resolve(name, create=True)
+        return {"path": path}
+    text = await self.vault.get_text(path)
+    if text is None:
+        raise VaultError("Unknown person.")
+    props, _ = split_frontmatter(text)
+    title = path.rsplit("/", 1)[-1].removesuffix(".md")
+    if name.casefold() != title.casefold():
+        aliases = props.get("aliases") or []
+        aliases = aliases if isinstance(aliases, list) else [aliases]
+        if name.casefold() not in {str(a).casefold() for a in aliases}:
+            await self.set_properties(path, {"aliases": aliases + [name]})
+    diag.event("people", f"linked “{name}” to {path}")
+    return {"path": path}
+
+
+People.me_names = _me_names
+People.link_name = _link_name
