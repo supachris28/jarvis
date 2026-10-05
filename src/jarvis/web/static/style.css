@@ -341,3 +341,6 @@ a.whatsnew-link:hover { border-color: var(--accent); }
 .chip.unknown { border-style: dashed; color: var(--muted); background: transparent; cursor: pointer; }
 .meeting .who { padding: .5rem; border-radius: 10px; background: var(--bg); }
 .meeting .who input { flex: 1 1 160px; }
+
+.people-search { width: 100%; font-size: 1.05rem; padding: 0.7rem 0.9rem; margin: 0.25rem 0 0.75rem; }
+#note-person { margin: 0.75rem 0; }

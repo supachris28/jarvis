@@ -164,6 +164,9 @@ class People:
         notes = await self.notes()
         stats = self.interactions()
         contacts = {r["path"]: r["birthday"] for r in self.db.all("SELECT path, birthday FROM contacts WHERE path != ''")}
+        addresses: dict[str, list[str]] = {}
+        for r in self.db.all("SELECT email, path FROM people WHERE path != ''"):
+            addresses.setdefault(r["path"], []).append(r["email"])
         people = []
         for path, props in notes.items():
             name = path.rsplit("/", 1)[-1].removesuffix(".md")
@@ -172,6 +175,11 @@ class People:
                     "partner": display(props.get("partner")), "children": display(props.get("children")),
                     "parents": display(props.get("parents")), "phone": ", ".join(display(props.get("phone") or
                                                                                           props.get("phones")))}
+            aliases = props.get("aliases") or []
+            item["aliases"] = [str(a) for a in ([aliases] if isinstance(aliases, str) else aliases) if a][:10]
+            emails = props.get("emails") or props.get("email") or []
+            emails = [str(e) for e in ([emails] if isinstance(emails, str) else emails) if e]
+            item["emails"] = list(dict.fromkeys(emails + addresses.get(path, [])))[:10]
             birthday = props.get("birthday") or props.get("birthdate") or props.get("dob") or contacts.get(path, "")
             item |= self._birthday(birthday)
             seen = stats.get(path, {"count": 0, "last": 0})

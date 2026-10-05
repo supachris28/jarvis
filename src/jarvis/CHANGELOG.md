@@ -1,5 +1,9 @@
 # What's new in Jarvis
 
+## 0.19.0 — 5 October 2026
+- **Search people** from the top of the People tab: names, nicknames, family, partner and children, email addresses, phone and birthday. Enter opens the best match; if nobody matches, *Add* them.
+- **Edit details on a person's note**: opening a People note in Jarvis shows *Edit details* (how you know them, birthday, family, partner, children, parents, phone), open straight away when something's missing.
+
 ## 0.18.3 — 5 October 2026
 - **Partners' children suggested.** When someone's partner has children who aren't on their page, Jarvis asks “Sam has Mia and Leo. Are they Alex's children too?” — on both partners' pages and the children's. *Yes* links them both ways; *No* (step-children, say) is remembered.
 

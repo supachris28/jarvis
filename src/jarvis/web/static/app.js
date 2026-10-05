@@ -978,12 +978,46 @@ async function loadPeople(path) {
   renderPeopleList();
   $("#person-new").innerHTML = personForm({}, false);
 }
+function personText(p) {
+  return [p.name, ...(p.aliases || []), p.relation, p.family, ...(p.partner || []), ...(p.children || []),
+          ...(p.parents || []), ...(p.emails || []), p.phone, p.birthday_text].filter(Boolean).join(" ").toLowerCase();
+}
+function peopleMatches(q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const all = peopleData ? peopleData.people : [];
+  if (!words.length) return all;
+  const scored = all.map((p) => {
+    const text = personText(p);
+    if (!words.every((w) => text.includes(w))) return null;
+    const name = [p.name, ...(p.aliases || [])].join(" ").toLowerCase();
+    const score = words.reduce((n, w) => n + (name.split(/\s+/).some((x) => x.startsWith(w)) ? 2 : name.includes(w) ? 1 : 0), 0);
+    return [score, p];
+  }).filter(Boolean);
+  return scored.sort((a, b) => b[0] - a[0] || b[1].contact_count - a[1].contact_count).map(([, p]) => p);
+}
 function renderPeopleList() {
-  const q = $("#people-search").value.trim().toLowerCase();
-  const list = (peopleData ? peopleData.people : []).filter((p) => !q || `${p.name} ${p.relation} ${p.family}`.toLowerCase().includes(q));
-  $("#people-list").innerHTML = list.slice(0, 150).map(personRow).join("") || '<p class="muted">Nobody yet.</p>';
+  const q = $("#people-search").value.trim();
+  const list = peopleMatches(q);
+  $("#people-browse").classList.toggle("hidden", !!q);
+  $("#people-heading").innerHTML = q ? `${list.length} ${list.length === 1 ? "match" : "matches"}`
+    : 'Everyone <span class="muted small">— most in touch first</span>';
+  $("#people-list").innerHTML = list.slice(0, 150).map(personRow).join("")
+    || (q ? `<p class="muted">Nobody called “${esc(q)}”. <button type="button" class="ghost" id="people-add-typed">Add ${esc(q)}</button></p>`
+          : '<p class="muted">Nobody yet.</p>');
 }
 $("#people-search").addEventListener("input", renderPeopleList);
+$("#people-search").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const first = peopleMatches($("#people-search").value.trim())[0];
+  if (first && $("#people-search").value.trim()) location.hash = `#people?p=${encodeURIComponent(first.path)}`;
+});
+$("#people-list").addEventListener("click", (event) => {
+  if (event.target.id !== "people-add-typed") return;
+  const add = $("#person-new").closest("details");
+  add.open = true;
+  $("#person-new").querySelector("[name=name]").value = $("#people-search").value.trim();
+  add.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 $("#people-prompts").addEventListener("submit", async (event) => {
   event.preventDefault();
   const card = event.target.closest("[data-path]");
@@ -1262,7 +1296,25 @@ async function loadNote(path) {
   $("#note-properties").classList.toggle("hidden", !props.length);
   $("#note-body").innerHTML = markdown(data.body || "");
   $("#note-add").dataset.path = data.path;
+  loadNotePerson(data.path);
 }
+async function loadNotePerson(path) {    // a People note: edit their details right here
+  const box = $("#note-person");
+  const isPerson = /^People\/.+\.md$/.test(path);
+  box.classList.toggle("hidden", !isPerson);
+  if (!isPerson) return;
+  const r = await api(`/api/people/one?path=${encodeURIComponent(path)}`);
+  if (!r.ok) { box.classList.add("hidden"); return; }
+  const p = await r.json();
+  $("#note-person-form").innerHTML = personForm(p, false);
+  $("#note-person-form").dataset.path = path;
+  box.open = !!(p.missing && p.missing.length);
+}
+$("#note-person-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const path = event.target.dataset.path;
+  if (await savePerson(event.target, path)) setTimeout(() => loadNote(path), 500);
+});
 $("#note-add").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = $("#note-add-text").value.trim();

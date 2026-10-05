@@ -39,6 +39,8 @@ class PeopleTests(IntegrationBase):
         ben = next(p for p in directory["people"] if p["name"] == "Ben Topliss")
         self.assertEqual(ben["contact_count"], 4)
         self.assertEqual([p["name"] for p in directory["prompts"]], ["Ben Topliss"], "a regular Jarvis knows little about")
+        self.assertEqual(ben["emails"], ["ben@example.com"], "emails and aliases are searchable on the People page")
+        self.assertEqual(ben["aliases"], [])
         person = self.run_async(s.people.update("People/Ben Topliss.md", {
             "relation": "friend from church", "birthday": "12 March 1986", "family": "Topliss",
             "partner": "Emily", "children": "Sam, Lily"}))

@@ -144,12 +144,15 @@
         <div id="people-index">
           <div class="toolbar">
             <h2>People</h2>
-            <input id="people-search" type="search" placeholder="Search people" autocomplete="off">
           </div>
-          <div id="people-prompts" class="list"></div>
-          <h3>Families</h3>
-          <div id="family-list" class="grid families"></div>
-          <h3>Everyone <span class="muted small">— most in touch first</span></h3>
+          <input id="people-search" class="people-search" type="search" autocomplete="off" enterkeyhint="go"
+                 placeholder="Search names, nicknames, families, children, emails…" aria-label="Search people">
+          <div id="people-browse">
+            <div id="people-prompts" class="list"></div>
+            <h3>Families</h3>
+            <div id="family-list" class="grid families"></div>
+          </div>
+          <h3 id="people-heading">Everyone <span class="muted small">— most in touch first</span></h3>
           <div id="people-list" class="list"></div>
           <details class="card"><summary><strong>Add someone</strong></summary>
             <form id="person-new" class="person-form"></form></details>
@@ -193,6 +196,9 @@
         <h2 id="note-title"></h2>
         <div id="note-path" class="muted small"></div>
         <dl id="note-properties" class="card note-properties hidden"></dl>
+        <details id="note-person" class="card hidden"><summary><strong>Edit details</strong>
+          <span class="muted small">— how you know them, birthday, family</span></summary>
+          <form id="note-person-form" class="person-form"></form></details>
         <div id="note-body" class="card note-body"></div>
         <form id="note-add" class="card note-add">
           <label for="note-add-text" class="small">Add to this note <span class="muted">(added at the end with today's
