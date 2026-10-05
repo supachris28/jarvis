@@ -117,8 +117,18 @@ class People:
                         bump(addresses[address], row["ts"])
             elif row["from_addr"] in addresses:
                 bump(addresses[row["from_addr"]], row["ts"])
-        for row in self.db.all("SELECT attendees, start FROM events WHERE status != 'cancelled' AND start >= ?",
-                               ((datetime.now(self.settings.tz).date() - timedelta(days=days)).isoformat(),)):
+        tz = self.settings.tz
+        now = datetime.now(tz)
+        for row in self.db.all("SELECT attendees, start FROM events WHERE status != 'cancelled' AND start >= ? "
+                               "AND start <= ?", ((now.date() - timedelta(days=days)).isoformat(),
+                                                  now.strftime("%Y-%m-%dT%H:%M:%S"))):
+            try:   # only events that have happened: a weekly meeting next Tuesday isn't being in touch today
+                started = datetime.fromisoformat(row["start"][:19])
+                ts = (started if started.tzinfo else started.replace(tzinfo=tz)).timestamp()
+            except ValueError:
+                continue
+            if ts > time.time():
+                continue
             try:
                 attendees = json.loads(row["attendees"] or "[]")
             except ValueError:
@@ -126,11 +136,7 @@ class People:
             for attendee in attendees:
                 path = addresses.get((attendee.get("email") or "").casefold())
                 if path and not attendee.get("self"):
-                    try:
-                        ts = datetime.fromisoformat(row["start"][:19]).timestamp()
-                    except ValueError:
-                        ts = time.time()
-                    bump(path, min(ts, time.time()))
+                    bump(path, ts)
         return stats
 
     def _birthday(self, value) -> dict:

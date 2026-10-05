@@ -1,5 +1,8 @@
 # What's new in Jarvis
 
+## 0.19.1 — 5 October 2026
+- Fixed: people in a recurring event showed as “last in touch today” — only events that have already happened count now, at the time they happened.
+
 ## 0.19.0 — 5 October 2026
 - **Search people** from the top of the People tab: names, nicknames, family, partner and children, email addresses, phone and birthday. Enter opens the best match; if nobody matches, *Add* them.
 - **Edit details on a person's note**: opening a People note in Jarvis shows *Edit details* (how you know them, birthday, family, partner, children, parents, phone), open straight away when something's missing.

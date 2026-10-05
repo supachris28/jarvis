@@ -66,6 +66,23 @@ class PeopleTests(IntegrationBase):
         # every change can be undone from the Vault tab
         self.assertTrue(s.db.one("SELECT 1 FROM note_history WHERE path = 'People/Ben Topliss.md'"))
 
+    def test_recurring_event_isnt_contact_today(self):
+        s = self.services
+        tz = self.settings.tz
+        now = datetime.now(tz).replace(microsecond=0, tzinfo=None)
+        emily = json.dumps([{"email": "emily@example.com"}, {"email": "chris@example.com", "self": True}])
+        for n, offset in enumerate((-14, -7, 0.1, 7, 14)):   # weekly: two gone, one later today, two to come
+            start = now + timedelta(days=offset)
+            s.db.execute("INSERT INTO events (event_id, calendar_id, path, summary, start, end, all_day, location, "
+                         "description, attendees, status, updated, html_link) VALUES (?, 'primary', 'x.md', 'Prayer', ?, ?,"
+                         " 0, '', '', ?, 'confirmed', '1', '')",
+                         (f"w{n}", start.isoformat(), (start + timedelta(hours=1)).isoformat(), emily))
+        seen = s.people.interactions()["People/Emily Topliss.md"]
+        self.assertEqual(seen["count"], 2, "only the ones that have happened")
+        self.assertAlmostEqual(seen["last"], (now - timedelta(days=7)).replace(tzinfo=tz).timestamp(), delta=1)
+        emily = next(p for p in self.run_async(s.people.directory())["people"] if p["name"] == "Emily Topliss")
+        self.assertEqual(emily["last_contact_text"], "7 days ago")
+
     def test_partner_children_suggested(self):
         s = self.services
         self.run_async(s.people.update("People/Ben Topliss.md", {"family": "Topliss", "children": "Sam, Lily"}))
