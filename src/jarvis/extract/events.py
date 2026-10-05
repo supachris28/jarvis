@@ -366,8 +366,9 @@ Rules:
 - Resolve relative dates ("next Tuesday", "tomorrow") using the email's sent date — for a forwarded email, the
   date the forwarded email was sent (shown in its "--- Forwarded email from …, sent …" line).
 - An email can hold several events: a list of rehearsals, fixtures, sessions or term dates. Return one event per
-  date (up to 20), each with the same clear title plus what's different ("Annie rehearsal", "Annie — dress
-  rehearsal"). A date range ("26-30 October") is one all-day event with an end date.
+  date (up to 20), each with the same clear title taken from the email, plus what's different about that date.
+  Never invent names that aren't in the email. A date range ("26-30 October") is one all-day event with an end
+  date. A time given once for every date ("8pm each time") applies to each of them (all_day false).
 - In a forwarded email, Chris's own note is at the top; the event details are in the forwarded part.
 - Use local time as written; do not convert time zones.
 - Skip marketing, vague ("sometime next month"), past events, and newsletters.
@@ -403,12 +404,14 @@ def validate_llm_events(raw: str, tz: tzinfo, now: datetime, min_confidence: flo
             confidence = 0.0
         if not title or not start_raw or confidence < min_confidence:
             continue
-        all_day = bool(item.get("all_day")) or len(start_raw) == 10
+        # a time given wins over all_day: true (small models set both)
+        all_day = len(start_raw) == 10 or (bool(item.get("all_day")) and start_raw[11:16] in ("", "00:00"))
         try:
             start = parse_iso(start_raw[:10] if all_day else start_raw, tz)
         except ValueError:
             continue
-        if start < now - timedelta(hours=2) or start > now + timedelta(days=730):
+        if (start.date() < now.date() if all_day else start < now - timedelta(hours=2)) or \
+                start > now + timedelta(days=730):
             continue
         end_raw = str(item.get("end", "") or "").strip()
         try:

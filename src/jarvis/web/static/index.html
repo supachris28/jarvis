@@ -122,9 +122,11 @@
       <section id="view-email" class="view hidden">
         <div class="toolbar">
           <button id="email-back" class="ghost">← Back</button>
-          <a id="email-gmail" class="button ghost" target="_blank" rel="noopener">Open in Gmail</a>
+          <span class="row-actions"><button id="email-events" class="ghost" type="button" title="Read this email again for dates to add to your calendar">Find events</button>
+          <a id="email-gmail" class="button ghost" target="_blank" rel="noopener">Open in Gmail</a></span>
         </div>
         <h2 id="email-subject"></h2>
+        <p id="email-events-status" class="small muted"></p>
         <div id="email-messages" class="list"></div>
       </section>
 

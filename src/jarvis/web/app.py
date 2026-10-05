@@ -434,6 +434,16 @@ async def deadlines_look_back(request: Request) -> Response:
         return JSONResponse({"error": str(error)}, status_code=400)
 
 
+async def email_find_events(request: Request) -> Response:
+    thread_id = request.path_params["thread_id"]
+    if not re.fullmatch(r"[0-9a-fA-F]{6,32}", thread_id):
+        return JSONResponse({"error": "not a Gmail thread id"}, status_code=400)
+    try:
+        return JSONResponse(await request.app.state.services.find_events_in_thread(thread_id))
+    except GoogleError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
 async def deliveries_list(request: Request) -> Response:
     return JSONResponse({"items": request.app.state.services.deliveries.active()})
 
@@ -874,6 +884,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/diag/export", diag_export),
             Route("/api/scheduled", scheduled_list),
             Route("/api/email/{thread_id}", email_thread),
+            Route("/api/email/{thread_id}/events", email_find_events, methods=["POST"]),
             Route("/api/deadlines", deadlines_list),
             Route("/api/deadlines/look-back", deadlines_look_back, methods=["POST"]),
             Route("/api/deadlines/{id:int}", deadline_update, methods=["POST"]),

@@ -382,6 +382,27 @@ class Services:
         return {"thread_id": thread_id, "subject": messages[0]["subject"] if messages else "",
                 "messages": messages, "gmail_url": thread_url(thread_id, self.db.get("gmail.me", ""))}
 
+    async def find_events_in_thread(self, thread_id: str) -> dict:
+        """Read an email (conversation) again for events — e.g. one read before Jarvis understood it. Script first;
+        anything left goes to the model now if it's available."""
+        from .google.gmail import parse_message
+        before = {r["id"] for r in self.db.all("SELECT id FROM event_proposals")}
+        raws = await self.gmail.thread_messages(thread_id)
+        for raw in raws:
+            message = parse_message(raw, self.settings.email_body_limit)
+            self.db.execute("DELETE FROM event_scan WHERE message_id = ?", (message.message_id,))
+            await self.events.on_message(message, notify=False)
+        queued = self.db.one("SELECT COUNT(*) n FROM event_scan WHERE status = 'pending' AND thread_id = ?",
+                             (thread_id,))["n"]
+        scan = await self.events.scan_queue(limit=max(1, queued)) if queued else {}
+        new = [self.events.get(r["id"]) for r in self.db.all("SELECT id FROM event_proposals") if r["id"] not in before]
+        found = [p for p in new if p and p["status"] in ("pending", "duplicate")]
+        diag.event("events", f"re-read thread {thread_id}: {len(found)} event(s)", messages=len(raws),
+                   model=scan.get("waiting", "") or bool(scan))
+        return {"messages": len(raws), "proposed": sum(p["status"] == "pending" for p in found),
+                "already_in_calendar": sum(p["status"] == "duplicate" for p in found),
+                "waiting_for_model": scan.get("pending", 0) if scan.get("waiting") else 0}
+
     def history(self, limit: int = 40) -> list[dict]:
         """Everything Jarvis did or you decided, newest first, in one list: reminders, home actions (including each
         repeating one's latest run) and calendar suggestions added or dismissed."""

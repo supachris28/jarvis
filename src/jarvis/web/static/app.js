@@ -948,6 +948,8 @@ async function loadEmail(threadId, notePath) {
   const data = await response.json();
   if (!response.ok) { $("#email-subject").textContent = data.error || "Couldn't load that email."; return; }
   $("#email-subject").textContent = data.subject || "(no subject)";
+  $("#email-events").dataset.thread = data.thread_id || threadId || "";
+  $("#email-events-status").textContent = "";
   $("#email-gmail").href = data.gmail_url;
   $("#email-messages").innerHTML = data.messages.map((m) => `
     <div class="card email-message">
@@ -957,6 +959,21 @@ async function loadEmail(threadId, notePath) {
       ${m.attachments && m.attachments.length ? `<div class="muted small">📎 ${m.attachments.map(esc).join(", ")}</div>` : ""}
     </div>`).join("");
 }
+$("#email-events").addEventListener("click", async () => {
+  const thread = $("#email-events").dataset.thread;
+  if (!thread) return;
+  $("#email-events-status").textContent = "Reading it for dates…";
+  Lights.set("looking", "calendar");
+  const r = await api(`/api/email/${encodeURIComponent(thread)}/events`, { method: "POST" });
+  const data = await r.json();
+  Lights.flash(r.ok ? "done" : "error");
+  if (!r.ok) { $("#email-events-status").textContent = data.error || "Couldn't read it."; return; }
+  const bits = [];
+  if (data.proposed) bits.push(`${data.proposed} event(s) to check in <a href="#plan">Plan</a>`);
+  if (data.already_in_calendar) bits.push(`${data.already_in_calendar} already in your calendar`);
+  if (data.waiting_for_model) bits.push("the rest will be read when the model on your PC is on");
+  $("#email-events-status").innerHTML = bits.join(" · ") || "No dates found in this email.";
+});
 $("#email-back").addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else location.hash = "#chat"; });
 
 /* ---------- reading a vault note inside Jarvis ---------- */

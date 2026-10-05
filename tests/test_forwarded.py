@@ -63,6 +63,33 @@ class ForwardParsing(IntegrationBase.__mro__[1]):
             ("School term dates — Performances", "2026-11-14T14:30", "2026-11-14", False)])
         self.assertEqual(parse_date_list("Lunch", "See you on 14/10/2026 at 1pm!", now), [], "one date isn't a list")
 
+    def test_a_course_plan_with_a_time_for_every_date(self):
+        """The email from the 👎 report: dates in bold Markdown ('Monday 5**th** October'), '8pm each time' said once,
+        the address in brackets, and what each session covers in bullet points below its date."""
+        from pathlib import Path
+        now = datetime(2026, 10, 5, 11, 48, tzinfo=self.settings_tz())
+        body = (Path(__file__).parent / "data_preach_training.txt").read_text()
+        events = parse_date_list("Fwd: Fw: Preach Training Group - Info", body, now)
+        self.assertEqual([e.start for e in events], [
+            "2026-10-05T20:00:00+01:00", "2026-11-16T20:00:00+00:00", "2027-01-11T20:00:00+00:00",
+            "2027-03-08T20:00:00+00:00", "2027-05-10T20:00:00+01:00", "2027-07-12T20:00:00+01:00"])
+        self.assertEqual({e.title for e in events}, {"Preach Training Group"})
+        self.assertEqual({e.location for e in events}, {"57 Church Road, Northfield, B312LB"})
+        self.assertEqual(events[0].notes.splitlines(), [
+            "• Intro + Q&A (1hour) read course syllabus pg3-20.",
+            "• Expounding Christ through the Structure of Redemptive History: Part 1, 2 + Q&A (2 hour 10mins) Read "
+            "syllabus pp. 21–54."])
+        self.assertNotIn("strongly recommend", events[-1].notes)
+
+    def test_model_answers_with_a_time_and_all_day(self):
+        from jarvis.extract.events import validate_llm_events
+        now = datetime(2026, 10, 5, 11, 48, tzinfo=self.settings_tz())
+        raw = ('{"events":[{"title":"Preach training","start":"2026-10-05T20:00:00","end":"2026-10-05T22:10:00",'
+               '"all_day":true,"confidence":0.9},{"title":"Inset day","start":"2026-10-05","all_day":true,'
+               '"confidence":0.9}]}')
+        found = validate_llm_events(raw, self.settings_tz(), now)
+        self.assertEqual([(e.title, e.all_day) for e in found], [("Preach training", False), ("Inset day", True)])
+
     @staticmethod
     def settings_tz():
         from zoneinfo import ZoneInfo
@@ -112,6 +139,23 @@ class ForwardFlow(IntegrationBase):
             result = client.post("/api/events/add-all", json={"ids": [p["id"] for p in pending]}, headers=h).json()
         self.assertEqual(result, {"added": 3, "errors": []})
         self.assertEqual(len(self.fake_cal.inserted), 3)
+
+    def test_reading_an_email_again_for_events(self):
+        s = self.services
+        today = datetime.now(self.settings.tz).date()
+        days = [today + timedelta(days=n) for n in (6, 13, 20)]
+        forward = gmail_message("f9", "abc123def", "Chris <chris@example.com>", "Fwd: Rehearsal schedule",
+                                GMAIL_FORWARD.format(d1=days[0], d2=days[1], d3=days[2]), labels=["SENT", "INBOX"])
+        gmail = FakeGmail([forward])
+
+        async def thread_messages(thread_id):
+            return [forward] if thread_id == "abc123def" else []
+        gmail.thread_messages = thread_messages
+        s.gmail = s.events.gmail = gmail
+        result = self.run_async(s.find_events_in_thread("abc123def"))
+        self.assertEqual((result["messages"], result["proposed"]), (1, 3))
+        again = self.run_async(s.find_events_in_thread("abc123def"))
+        self.assertEqual(again["proposed"], 0, "not proposed twice")
 
     def test_forwarded_parcel_and_renewal(self):
         s = self.services

@@ -233,21 +233,55 @@ def _date_spans(text: str, today: date) -> list[tuple[int, int, date]]:
 RANGE_JOIN = re.compile(r"^\s*(?:-|–|—|to|until|till)\s*$", re.I)
 
 
+EMPHASIS = re.compile(r"\*{1,3}|(?<!\w)_{1,3}|_{1,3}(?!\w)")
+SHARED_TIME = re.compile(
+    r"\b(?:at\s+|from\s+)?(\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm))(?:\s*(?:-|–|to|until)\s*(\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)))?"
+    r"\s+(?:each|every)\s+(?:time|week|session|meeting|month|evening)\b|"
+    r"\b(?:all|each|every)\s+(?:sessions?|meetings?|evenings?)\s+(?:start|begin)s?\s+at\s+(\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm))",
+    re.I)
+POSTCODE = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b")
+SUBJECT_TAIL = re.compile(r"\s*[-–:]\s*(?:info|information|details|update|dates|schedule)\s*$", re.I)
+
+
+def _shared_details(text: str) -> tuple[time | None, time | None, str]:
+    """A time that applies to every date ("we'll meet … 8pm each time") and a venue with a postcode."""
+    start = end = None
+    match = SHARED_TIME.search(text)
+    if match:
+        first = match.group(1) or match.group(3)
+        found = _find_times(f"at {first}" + (f" until {match.group(2)}" if match.group(2) else ""))
+        start, end = found[0], found[1]
+    place = ""
+    for candidate in re.findall(r"\(([^()]{5,120})\)", text) + text.splitlines():
+        if POSTCODE.search(candidate):
+            cut = candidate[:POSTCODE.search(candidate).end()]
+            cut = cut.rsplit("(", 1)[-1]          # "my house (57 Church Road, …, B31 2LB" → the address
+            place = re.sub(r"^.*?\b(?:at|address:?|venue:?|location:?)\s+(?=\S)", "", cut, flags=re.I).strip(" ,.:(")
+            break
+    return start, end, place[:150]
+
+
 def parse_date_list(subject: str, body: str, now: datetime, limit: int = 20) -> list[EventCandidate]:
     """Emails that list several dates — rehearsals, fixtures, term dates, a course's sessions — become one event per
     date. Only explicit dates count (not bare weekdays), on short lines, and there must be at least two different
     future dates; lines about money or orders are ignored. "26/10 - 30/10" is one event over those days; "13/11 7pm and
-    14/11 2:30pm" is two. The title is the line's own words, after the email's subject."""
+    14/11 2:30pm" is two. A time given once for all of them ("8pm each time") and a venue with a postcode are used for
+    every date; the bullet points under a date become its notes. The title is the line's own words, after the email's
+    subject."""
     tz = now.tzinfo
     today = now.date()
-    base = SUBJECT_NOISE.sub("", subject or "").strip(" -:") or "Event"
+    base = SUBJECT_TAIL.sub("", SUBJECT_NOISE.sub("", subject or "").strip(" -:")) or "Event"
+    text = EMPHASIS.sub("", body)
+    shared_start, shared_end, place = _shared_details(text)
     found: list[EventCandidate] = []
     seen: set[str] = set()
 
-    def add(day: date, last: date | None, text: str, label: str) -> None:
+    def add(day: date, last: date | None, text: str, label: str) -> EventCandidate | None:
         if day < today or day > today + timedelta(days=400) or len(found) >= limit:
-            return
+            return None
         start, end, _, rest = _find_times(text)
+        if start is None and last is None and shared_start is not None:
+            start, end = shared_start, shared_end
         own = _title(re.sub(r"[()\[\]]", " ", f"{label} {rest}"))
         own = re.sub(r"(?:\s*(?:\band\b|&|,|;|\bKO\b|kick[- ]?off|starts?|start time|from|at)\s*)+$", "", own,
                      flags=re.I).strip(" :-,") if own else ""
@@ -257,34 +291,52 @@ def parse_date_list(subject: str, body: str, now: datetime, limit: int = 20) -> 
         if last is not None or start is None:
             finish_day = (last or day) + timedelta(days=1)
             event = EventCandidate(title=title[:200], start=day.isoformat(), end=finish_day.isoformat(),
-                                   all_day=True, confidence=0.8, source="list")
+                                   all_day=True, location=place, confidence=0.8, source="list")
         else:
             begin = datetime.combine(day, start, tz)
             finish = datetime.combine(day, end, tz) if end else begin + timedelta(hours=1)
             if finish <= begin:
                 finish += timedelta(days=1)
             event = EventCandidate(title=title[:200], start=begin.isoformat(), end=finish.isoformat(), all_day=False,
-                                   confidence=0.8, source="list")
-        if event.start not in seen:
-            seen.add(event.start)
-            found.append(event)
+                                   location=place, confidence=0.8, source="list")
+        if event.start in seen:
+            return None
+        seen.add(event.start)
+        found.append(event)
+        return event
 
+    current: list[EventCandidate] = []   # the events of the last date line, which following bullets describe
     for raw in body.splitlines():
-        line = raw.strip(" \t-•*·–—")
-        if not line or len(line) > 200 or LIST_SKIP.search(line) or line.startswith("---"):
+        line = EMPHASIS.sub("", raw).strip(" \t-•*·–—")
+        if not line:
             continue
-        spans = _date_spans(line, today)
-        if not spans:
+        spans = _date_spans(line, today) if len(line) <= 200 and not line.startswith("---") else []
+        if not spans or LIST_SKIP.search(line):
+            bullet = re.match(r"^\s*(?:[-*•]|\d+[.)])\s", raw)
+            indented = raw.startswith((" ", "\t"))
+            if current and (bullet or indented) and len(line) <= 300:
+                for event in current:      # "- Intro + Q&A (1 hour) read pages 3-20" under "Monday 5th October"
+                    if len(event.notes) >= 600:
+                        continue
+                    if bullet or not event.notes:
+                        event.notes = (event.notes + "\n" if event.notes else "") + f"• {line}"
+                    else:                  # a bullet that wrapped onto the next line
+                        event.notes += f" {line}"
+            elif current and not (bullet or indented):
+                current = []               # a paragraph: the list for that date has ended
             continue
+        current = []
         label = line[:spans[0][0]]          # "Autumn half term:", "Performances:"
         index = 0
         while index < len(spans):
             a, b, day = spans[index]
             if index + 1 < len(spans) and RANGE_JOIN.match(line[b:spans[index + 1][0]]):
-                add(day, spans[index + 1][2], "", label)            # a range of days
+                event = add(day, spans[index + 1][2], "", label)            # a range of days
                 index += 2
-                continue
-            tail_end = spans[index + 1][0] if index + 1 < len(spans) else len(line)
-            add(day, None, line[b:tail_end], label)
-            index += 1
+            else:
+                tail_end = spans[index + 1][0] if index + 1 < len(spans) else len(line)
+                event = add(day, None, line[b:tail_end], label)
+                index += 1
+            if event is not None:
+                current.append(event)
     return found if len({e.start[:10] for e in found}) >= 2 else []
