@@ -459,7 +459,8 @@ class Deliveries:
     # ------------------------------------------------------------------ from email
     def on_message(self, message) -> int | None:
         """Called for every new email. Returns the delivery id when the email was about one."""
-        if "SPAM" in message.labels or "CATEGORY_PROMOTIONS" in message.labels or message.outgoing:
+        if "SPAM" in message.labels or "CATEGORY_PROMOTIONS" in message.labels or \
+                (message.outgoing and not message.forwarded_from):
             return None
         text = f"{message.subject}\n{message.body}"
         data = parcel_jsonld(message.html)
@@ -478,12 +479,12 @@ class Deliveries:
             return None  # talks about delivery but gives nothing to track (e.g. a marketing mention)
         order = data.get("order_number") or (ORDER_NUMBER.search(text).group(1) if ORDER_NUMBER.search(text) else "")
         now = datetime.now(self.settings.tz)
-        from_carrier = bool(carrier and carrier["name"].casefold() in message.from_name.casefold())
+        from_carrier = bool(carrier and carrier["name"].casefold() in message.sender_name.casefold())
         sender = FROM_SENDER.search(text) if from_carrier else None  # "your parcel from Hobbycraft is on its way"
         fields = {
             "retailer": data.get("retailer") or (sender.group(1).strip() if sender else
-                                                 "" if from_carrier else message.from_name),
-            "item": data.get("item") or find_items(message.subject, message.body, message.html, message.from_name),
+                                                 "" if from_carrier else message.sender_name),
+            "item": data.get("item") or find_items(message.subject, message.body, message.html, message.sender_name),
             "carrier": data.get("carrier") or (carrier["name"] if carrier else ""),
             "tracking_number": number,
             "tracking_url": url or (carrier["url"].format(n=number) if carrier and carrier["url"] and number else ""),

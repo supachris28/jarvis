@@ -714,7 +714,7 @@ function proposalCard(p) {
   const source = p.email_subject
     ? `From email: ${p.email_url ? `<a href="${esc(p.email_url)}">${esc(p.email_subject)}</a>` : esc(p.email_subject)}`
     : "From chat";
-  const how = { ics: "calendar invite", jsonld: "booking details", llm: `read by AI · ${Math.round(p.confidence * 100)}% sure`, chat: "your message" }[p.source] || p.source;
+  const how = { ics: "calendar invite", jsonld: "booking details", llm: `read by AI · ${Math.round(p.confidence * 100)}% sure`, chat: "your message", list: "dates listed in the email" }[p.source] || p.source;
   const endShown = p.all_day ? addDays(p.end.slice(0, 10), -1) : p.end.slice(0, 16);
   el.innerHTML = `
     <div class="p-title">${esc(p.title)}</div>
@@ -871,6 +871,32 @@ async function loadEvents() {
   $("#events-queue").textContent = data.queue ? `${data.queue} email(s) waiting to be read by the model.` : "";
   const list = $("#event-list");
   list.innerHTML = "";
+  /* several dates from one email: "Add all" (and "Dismiss all") above the cards */
+  const groups = {};
+  data.items.filter((p) => p.thread_id && p.kind !== "note").forEach((p) => (groups[p.thread_id] ||= []).push(p));
+  Object.values(groups).filter((g) => g.length > 1).forEach((g) => {
+    const bar = document.createElement("div");
+    bar.className = "card group-bar";
+    bar.innerHTML = `<div><strong>📅 ${g.length} dates</strong> from “${esc(g[0].email_subject || "an email")}”
+        <div class="muted small">${g.slice(0, 3).map((p) => esc(p.when)).join(" · ")}${g.length > 3 ? " …" : ""}</div></div>
+      <div class="row-actions"><button data-group="add">Add all ${g.length}</button>
+        <button class="ghost" data-group="dismiss">Dismiss all</button></div><div class="p-status small"></div>`;
+    bar.addEventListener("click", async (event) => {
+      const action = event.target.closest("[data-group]")?.dataset.group;
+      if (!action) return;
+      bar.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      if (action === "add") {
+        const r = await api("/api/events/add-all", { method: "POST", body: JSON.stringify({ ids: g.map((p) => p.id) }) });
+        const result = await r.json();
+        bar.querySelector(".p-status").textContent = result.errors && result.errors.length
+          ? `Added ${result.added}; ${result.errors[0]}` : `Added ${result.added} to your calendar.`;
+      } else {
+        await Promise.all(g.map((p) => api(`/api/events/${p.id}/dismiss`, { method: "POST", body: "{}" })));
+      }
+      setTimeout(loadEvents, 900);
+    });
+    list.appendChild(bar);
+  });
   data.items.forEach((p) => list.appendChild(proposalCard(p)));
   if (!data.items.length && !$("#action-proposals").childElementCount) list.innerHTML = '<p class="muted">Nothing waiting. Events found in your email and home actions you ask for appear here.</p>';
   await loadMuted();

@@ -23,7 +23,7 @@ from ..config import Settings
 from ..db import Database
 from ..extract.events import (EXTRACT_PROMPT, EventCandidate, parse_ics, parse_iso, parse_jsonld, similar_titles,
                               is_not_event, title_tokens, validate_llm_events, worth_llm_scan)
-from ..extract.event_text import _find_date, calendar_name, parse_event_request
+from ..extract.event_text import _find_date, calendar_name, parse_date_list, parse_event_request
 from ..google.calendar import Calendar
 from ..google.gmail import Gmail, ParsedMessage, app_email_url, thread_url
 from ..google.oauth import GoogleError
@@ -114,6 +114,16 @@ class EventFinder:
                 created += 1
         if candidates:
             return created
+        # several dates listed one per line (rehearsals, fixtures, term dates) — by script, no model needed
+        if not message.bulk and not is_not_event(message.subject):
+            listed = parse_date_list(message.subject, message.body, datetime.now(self.settings.tz))
+            if listed and worth_llm_scan(message.subject, message.body, False)[0]:
+                diag.event("events", f"{len(listed)} dates listed in “{message.subject[:60]}”",
+                           found=[f"{c.title} @ {c.start}" for c in listed])
+                for candidate in listed:
+                    if self.propose(candidate, message, notify=notify):
+                        created += 1
+                return created
         automated = bool(message.bulk or "CATEGORY_UPDATES" in message.labels)
         sender = (message.from_addr or "").lower()
         if self.is_muted(sender):
@@ -126,8 +136,9 @@ class EventFinder:
             self.db.execute(
                 "INSERT OR IGNORE INTO event_scan (message_id, queued, status, body, subject, sender, ts, thread_id, "
                 "automated) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
-                (message.message_id, time.time(), message.body[:6000], message.subject,
-                 f"{message.from_name} <{message.from_addr}>", message.ts, message.thread_id, int(automated)),
+                (message.message_id, time.time(), message.body[:8000], message.subject,
+                 f"{message.sender_name} <{message.forwarded_from or message.from_addr}>", message.ts,
+                 message.thread_id, int(automated)),
             )
         return created
 
@@ -248,17 +259,29 @@ class EventFinder:
 
     async def flush_notifications(self) -> int:
         ids, self._pending_notifications = self._pending_notifications, []
-        for proposal_id in ids:
-            row = self.get(proposal_id)
-            if not row or row["status"] != "pending":
+        rows = [r for r in (self.get(i) for i in ids) if r and r["status"] == "pending"]
+        groups: dict[str, list[dict]] = {}
+        for row in rows:
+            groups.setdefault(row["thread_id"] or f"chat:{row['id']}", []).append(row)
+        for group in groups.values():
+            if len(group) > 1:   # several dates from one email: one notification, not one each
+                group.sort(key=lambda r: r["start"])
+                lines = [f"{r['when']} — {one_line(r['title'], 50)}" for r in group[:5]]
+                more = f"\n…and {len(group) - 5} more" if len(group) > 5 else ""
+                await self.notifier.notify(
+                    title=f"Add to calendar? {len(group)} dates from “{one_line(group[0]['email_subject'], 50)}”",
+                    message="\n".join(lines) + more, priority=3,
+                    url=self.settings.public_url.rstrip("/") + "/#events",
+                    dedupe=f"proposals:{group[0]['thread_id']}:{group[0]['id']}", tags="calendar", category="events")
                 continue
+            row = group[0]
             where = f" · {row['location']}" if row["location"] else ""
             await self.notifier.notify(
                 title=f"Add to calendar? {one_line(row['title'], 60)}",
                 message=f"{describe_when(row['start'], row['end'], row['all_day'], self.settings.tz)}{where}\n"
                         f"From email: {one_line(row['email_subject'], 80) or '(chat)'}",
                 priority=3, url=self.settings.public_url.rstrip("/") + "/#events",
-                dedupe=f"proposal:{proposal_id}", tags="calendar", category="events",
+                dedupe=f"proposal:{row['id']}", tags="calendar", category="events",
             )
         return len(ids)
 

@@ -222,6 +222,29 @@ async def event_add(request: Request) -> Response:
     return JSONResponse(item)
 
 
+async def events_add_all(request: Request) -> Response:
+    """'Add all' for several dates from one email."""
+    services: Services = request.app.state.services
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    ids = [int(i) for i in (body or {}).get("ids", []) if str(i).isdigit()][:40]
+    calendar_id = str((body or {}).get("calendar_id", "") or "")
+    added, errors = 0, []
+    for proposal_id in ids:
+        try:
+            await services.events.accept(proposal_id, {"calendar_id": calendar_id} if calendar_id else {})
+            added += 1
+        except GoogleError as error:
+            errors.append(str(error))
+            if "permission" in str(error).casefold():
+                break
+    if added:
+        services.trigger("calendar")
+    return JSONResponse({"added": added, "errors": errors[:3]}, status_code=200 if added or not errors else 400)
+
+
 async def event_dismiss(request: Request) -> Response:
     try:
         body = await request.json()
@@ -837,6 +860,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/activity", activity),
             Route("/api/events", events_list),
             Route("/api/events/{id:int}/add", event_add, methods=["POST"]),
+            Route("/api/events/add-all", events_add_all, methods=["POST"]),
             Route("/api/events/{id:int}/dismiss", event_dismiss, methods=["POST"]),
             Route("/api/events/senders", event_senders),
             Route("/api/events/senders/unmute", event_sender_unmute, methods=["POST"]),

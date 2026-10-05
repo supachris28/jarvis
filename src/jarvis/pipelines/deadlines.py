@@ -111,7 +111,7 @@ class Deadlines:
 
     # ---------------------------------------------------------------- deadlines
     def on_message(self, message, announce: bool = True) -> int | None:
-        if message.outgoing or SKIP_LABELS.intersection(message.labels):
+        if (message.outgoing and not message.forwarded_from) or SKIP_LABELS.intersection(message.labels):
             return None
         if MARKETING.search(message.subject):
             return None
@@ -122,7 +122,7 @@ class Deadlines:
         kind, due, evidence = found
         lead = next(k[3] for k in KINDS if k[0] == kind)
         remind = datetime.combine(due - timedelta(days=lead), dtime(9, 0), tz).timestamp()
-        org = one_line(message.from_name or message.from_addr, 60)
+        org = one_line(message.sender_name or message.from_addr, 60)
         cursor = self.db.execute(
             "INSERT OR IGNORE INTO deadlines (created, kind, title, org, due, remind_at, message_id, thread_id, evidence) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

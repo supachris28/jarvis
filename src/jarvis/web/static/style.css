@@ -288,3 +288,6 @@ header .voice.on .switch::after { transform: translateX(12px); }
   .composer #send .label { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .composer .mic.on::before { transition: none; } }
+
+.group-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .6rem;
+  border-color: var(--accent); }

@@ -76,9 +76,11 @@ class DeliveryTests(IntegrationBase):
         s = self.services
         d = s.deliveries
         now = time.time()
+        from datetime import datetime as dt, timedelta as td
+        due = dt.now(self.settings.tz).date() + td(days=3)  # (a fixed date here stopped working once it had passed)
         dispatched = self.email("d1", "Argos <noreply@argos.co.uk>", "Your Argos order has been dispatched",
                                 "Your order AR123456 is on its way. Track your parcel with the link below. "
-                                "Estimated delivery: Saturday 3 October.",
+                                f"Estimated delivery: {due:%A} {due.day} {due:%B}.",
                                 html=f'<a href="{self.base}/track/AB123456789GB">Track your parcel</a>', ts=now - 7200)
         promo = self.email("p1", "Shop <deals@shop.com>", "Free delivery this weekend!", "20% off and free delivery.")
         s.gmail_pipeline.gmail = FakeGmail([dispatched, promo])
@@ -91,7 +93,7 @@ class DeliveryTests(IntegrationBase):
         self.assertEqual((parcel["retailer"], parcel["status"], parcel["tracking_url"]),
                          ("Argos", "dispatched", f"{self.base}/track/AB123456789GB"))
         self.assertEqual(parcel["tracking_number"], "AB123456789GB")
-        self.assertTrue(parcel["expected"].endswith("-10-03"))
+        self.assertEqual(parcel["expected"], due.isoformat())
         self.assertEqual(s.db.one("SELECT COUNT(*) n FROM notifications WHERE title LIKE '%Argos%'")["n"], 1)
         # hourly: the tracking page moved on → updated and notified
         self.assertEqual(self.run_async(d.run())["changed"], 1)

@@ -32,6 +32,13 @@ class ParsedMessage:
     html: str = ""                                                   # raw HTML (for JSON-LD), not stored
     ics_inline: list[str] = field(default_factory=list)              # text/calendar parts with inline data
     ics_attachment_ids: list[str] = field(default_factory=list)      # .ics attachments to fetch
+    forwarded_from: str = ""                                         # a forwarded email: who first sent it
+    forwarded_name: str = ""
+
+    @property
+    def sender_name(self) -> str:
+        """Who the email is really from — the original sender of a forwarded email."""
+        return self.forwarded_name or (self.forwarded_from.split("@")[0] if self.forwarded_from else self.from_name)
 
     @property
     def promotional(self) -> bool:
@@ -89,9 +96,56 @@ def html_to_text(markup: str) -> str:
 
 
 QUOTE_START = re.compile(r"^(On .{5,200}wrote:|-{2,} ?Original Message ?-{2,}|From: .+|Sent from my \w+)", re.I)
+# the start of a forwarded email (Gmail, Apple Mail, Outlook)
+FORWARD_MARK = re.compile(r"^[ \t>]*(?:-{3,}\s*Forwarded message\s*-{3,}|Begin forwarded message:)[ \t]*$", re.I | re.M)
+# also used under replies, so only counted when the subject says it's a forward
+WEAK_FORWARD_MARK = re.compile(r"^[ \t>]*(?:-{3,}\s*Original Message\s*-{3,}|_{10,})[ \t]*$", re.I | re.M)
+FORWARD_HEADER = re.compile(r"^[ \t>*]*(From|Date|Sent|Subject|To|Cc|Reply-To)\s*:\**\s*(.*)$", re.I)
+FORWARD_SUBJECT = re.compile(r"^\s*(?:fwd?|fw)\s*:", re.I)
 
 
-def clean_body(text: str, limit: int) -> str:
+def split_forward(text: str, subject: str = "") -> tuple[str, dict, str] | None:
+    """(your note, the forwarded email's headers, the forwarded email's text) — or None if nothing is forwarded."""
+    text = text.replace("\r\n", "\n")
+    match = FORWARD_MARK.search(text) or (WEAK_FORWARD_MARK.search(text) if FORWARD_SUBJECT.match(subject or "") else None)
+    start = match.end() if match else None
+    if start is None and FORWARD_SUBJECT.match(subject or ""):
+        # Outlook and some phones: no marker line, just a From:/Sent:/To:/Subject: block
+        block = re.search(r"^[ \t>*]*From\s*:.+\n(?:[ \t>*]*(?:Sent|Date|To|Cc|Subject)\s*:.*\n){2,5}", text, re.I | re.M)
+        if block:
+            match, start = block, block.start()
+    if start is None:
+        return None
+    note = text[:match.start()]
+    headers: dict[str, str] = {}
+    lines = text[start:].split("\n")
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    while index < len(lines):
+        header = FORWARD_HEADER.match(lines[index])
+        if not header:
+            break
+        headers.setdefault(header.group(1).casefold(), header.group(2).strip())
+        index += 1
+    if not headers:
+        return None
+    body = "\n".join(re.sub(r"^>[ ]?", "", line) for line in lines[index:])
+    return note, headers, body
+
+
+def clean_body(text: str, limit: int, subject: str = "", _depth: int = 0) -> str:
+    forward = split_forward(text, subject) if _depth < 3 else None
+    if forward:
+        note, headers, inner = forward
+        mine = clean_body(note, limit, _depth=_depth + 1)
+        sent = headers.get("date") or headers.get("sent") or ""
+        heading = (f"--- Forwarded email from {headers.get('from', 'someone')}"
+                   + (f", sent {sent}" if sent else "") + (f": {headers['subject']}" if headers.get("subject") else "")
+                   + " ---")
+        theirs = clean_body(inner, limit, headers.get("subject", ""), _depth + 1)
+        body = (mine + "\n\n" if mine else "") + heading + "\n" + theirs
+        return body if len(body) <= limit else body[:limit].rstrip() + "\n\n…(truncated)"
     lines = []
     for line in text.replace("\r\n", "\n").split("\n"):
         stripped = line.strip()
@@ -151,13 +205,23 @@ def parse_message(message: dict, body_limit: int = 8000) -> ParsedMessage:
         subject=headers.get("subject", "").strip(),
         labels=list(message.get("labelIds", []) or []),
         snippet=html.unescape(message.get("snippet", "")),
-        body=clean_body(text, body_limit),
+        body=clean_body(text, body_limit, headers.get("subject", "")),
         attachments=attachments,
         list_unsubscribe="list-unsubscribe" in headers,
         html="\n".join(rich)[:300_000],
         ics_inline=ics,
         ics_attachment_ids=ics_ids,
+        **forwarded_sender(text, headers.get("subject", "")),
     )
+
+
+def forwarded_sender(text: str, subject: str) -> dict:
+    forward = split_forward(text, subject)
+    if not forward:
+        return {}
+    name, address = parseaddr(forward[1].get("from", ""))
+    return {"forwarded_from": address.casefold() or forward[1].get("from", "")[:100],
+            "forwarded_name": name.strip().strip('"')}
 
 
 class Gmail:

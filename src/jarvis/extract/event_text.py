@@ -206,3 +206,85 @@ def parse_event_request(prompt: str, now: datetime) -> EventCandidate | None:
         finish = begin + (duration or timedelta(hours=1))
     return EventCandidate(title=title, start=begin.isoformat(), end=finish.isoformat(), all_day=False,
                           confidence=0.95, source="chat")
+
+
+# ---------------------------------------------------------------- several dates in one email (by script)
+LIST_SKIP = re.compile(r"[£$€]\s?\d|\b(order|invoice|paid|payment|refund|delivered|dispatched|statement|balance|"
+                       r"sent|received|posted|wrote|unsubscribe)\b", re.I)
+SUBJECT_NOISE = re.compile(r"^\s*(?:(?:re|fwd?|fw)\s*:\s*)+", re.I)
+WEEKDAY_ONLY = re.compile(rf"^(?:{WD}|and|&|,|\s)*$", re.I)
+
+
+def _date_spans(text: str, today: date) -> list[tuple[int, int, date]]:
+    """Every explicit date in a line: (start, end, date), in order, not overlapping."""
+    spans: list[tuple[int, int, date]] = []
+    for kind, pattern in DATE_PATTERNS:
+        if kind not in ("iso", "num", "dmy", "mdy"):
+            continue
+        for match in pattern.finditer(text):
+            if any(a < match.end() and match.start() < b for a, b, _ in spans):
+                continue
+            found, _ = _find_date(match.group(0), today, (kind,))
+            if found is not None:
+                spans.append((match.start(), match.end(), found))
+    return sorted(spans)
+
+
+RANGE_JOIN = re.compile(r"^\s*(?:-|–|—|to|until|till)\s*$", re.I)
+
+
+def parse_date_list(subject: str, body: str, now: datetime, limit: int = 20) -> list[EventCandidate]:
+    """Emails that list several dates — rehearsals, fixtures, term dates, a course's sessions — become one event per
+    date. Only explicit dates count (not bare weekdays), on short lines, and there must be at least two different
+    future dates; lines about money or orders are ignored. "26/10 - 30/10" is one event over those days; "13/11 7pm and
+    14/11 2:30pm" is two. The title is the line's own words, after the email's subject."""
+    tz = now.tzinfo
+    today = now.date()
+    base = SUBJECT_NOISE.sub("", subject or "").strip(" -:") or "Event"
+    found: list[EventCandidate] = []
+    seen: set[str] = set()
+
+    def add(day: date, last: date | None, text: str, label: str) -> None:
+        if day < today or day > today + timedelta(days=400) or len(found) >= limit:
+            return
+        start, end, _, rest = _find_times(text)
+        own = _title(re.sub(r"[()\[\]]", " ", f"{label} {rest}"))
+        own = re.sub(r"(?:\s*(?:\band\b|&|,|;|\bKO\b|kick[- ]?off|starts?|start time|from|at)\s*)+$", "", own,
+                     flags=re.I).strip(" :-,") if own else ""
+        if own and WEEKDAY_ONLY.match(own):
+            own = ""
+        title = f"{base} — {own[:1].upper() + own[1:]}" if own and own.casefold() not in base.casefold() else base
+        if last is not None or start is None:
+            finish_day = (last or day) + timedelta(days=1)
+            event = EventCandidate(title=title[:200], start=day.isoformat(), end=finish_day.isoformat(),
+                                   all_day=True, confidence=0.8, source="list")
+        else:
+            begin = datetime.combine(day, start, tz)
+            finish = datetime.combine(day, end, tz) if end else begin + timedelta(hours=1)
+            if finish <= begin:
+                finish += timedelta(days=1)
+            event = EventCandidate(title=title[:200], start=begin.isoformat(), end=finish.isoformat(), all_day=False,
+                                   confidence=0.8, source="list")
+        if event.start not in seen:
+            seen.add(event.start)
+            found.append(event)
+
+    for raw in body.splitlines():
+        line = raw.strip(" \t-•*·–—")
+        if not line or len(line) > 200 or LIST_SKIP.search(line) or line.startswith("---"):
+            continue
+        spans = _date_spans(line, today)
+        if not spans:
+            continue
+        label = line[:spans[0][0]]          # "Autumn half term:", "Performances:"
+        index = 0
+        while index < len(spans):
+            a, b, day = spans[index]
+            if index + 1 < len(spans) and RANGE_JOIN.match(line[b:spans[index + 1][0]]):
+                add(day, spans[index + 1][2], "", label)            # a range of days
+                index += 2
+                continue
+            tail_end = spans[index + 1][0] if index + 1 < len(spans) else len(line)
+            add(day, None, line[b:tail_end], label)
+            index += 1
+    return found if len({e.start[:10] for e in found}) >= 2 else []
