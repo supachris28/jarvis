@@ -94,6 +94,8 @@ class Settings:
     ha_verify_tls: bool = True
 
     brief_time: str = "07:30"
+    ha_shopping_list: str = "todo.shopping_list"   # Home Assistant to-do list for shopping; "off" = keep it in Jarvis
+    weekly_review: str = "sun 18:00"               # weekly review day and time; "off" to switch it off
     followup_days: int = 3               # nudge about emails you sent that got no reply after this many days
     backup_time: str = "03:15"           # nightly database backup; "off" to disable
     backup_dir: str = "Backups/Jarvis"   # Nextcloud folder for backups (never inside the vault)
@@ -198,6 +200,8 @@ class Settings:
             evening_time=_str("EVENING_TIME", "21:00"),
             backup_time=_str("BACKUP_TIME", "03:15"),
             followup_days=_int("FOLLOWUP_DAYS", 3),
+            ha_shopping_list=_str("HA_SHOPPING_LIST", "todo.shopping_list"),
+            weekly_review=_str("WEEKLY_REVIEW", "sun 18:00"),
             backup_dir=_str("BACKUP_DIR", "Backups/Jarvis"),
             brief_latitude=_str("BRIEF_LATITUDE"),
             brief_longitude=_str("BRIEF_LONGITUDE"),

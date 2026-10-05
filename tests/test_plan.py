@@ -311,6 +311,54 @@ class PlanTests(IntegrationBase):
         self.assertEqual(len(self.home.calls), calls)
         self.assertIn("missed", s.scheduler.get(repeat["id"])["result"])
 
+    def test_todo_and_shopping_lists(self):
+        s = self.services
+        tomorrow = datetime.now(TZ).date() + timedelta(days=1)
+
+        async def ask(text):
+            events = [e async for e in s.assistant.handle(text)]
+            return "".join(e.get("text", "") for e in events if e["type"] == "token")
+        self.assertIn("Added to your to-do list: **Sort the boiler service**", self.run_async(ask("I need to sort the boiler service")))
+        self.assertIn("(due tomorrow)", self.run_async(ask("todo: ring the dentist tomorrow")))
+        self.assertNotIn("to-do", self.run_async(ask("I need to know when the dentist is?")))
+        listing = self.run_async(ask("What's on my to-do list?"))
+        self.assertIn("- Ring the dentist — tomorrow", listing)
+        self.assertIn("- Sort the boiler service", listing)
+        self.assertIn("Ticked off: Sort the boiler service", self.run_async(ask("done boiler service")))
+        self.assertEqual([t["text"] for t in s.tasks.open()], ["Ring the dentist"])
+        evening = self.run_async(s.brief.build_evening())
+        self.assertIn("**To do tomorrow**\n- Ring the dentist", evening)
+        # snoozed and overdue
+        task = s.tasks.open()[0]
+        s.tasks.update(task["id"], {"due": (tomorrow - timedelta(days=3)).isoformat()})
+        self.assertTrue(s.tasks.get(task["id"])["overdue"])
+        self.assertIn("⚠️ Ring the dentist — was due", self.run_async(s.brief.build(with_opener=False)))
+        s.tasks.update(task["id"], {"snoozed": "week"})
+        self.assertEqual(s.tasks.open(), [])
+        # shopping goes to Home Assistant's to-do list
+        self.assertIn("Added to the shopping list (Home Assistant): milk, eggs, 2 loaves of bread",
+                      self.run_async(ask("add milk, eggs and 2 loaves of bread to the shopping list")))
+        self.assertEqual([i["summary"] for i in self.home.todo["todo.shopping_list"]], ["milk", "eggs", "2 loaves of bread"])
+        self.assertIn("- eggs", self.run_async(ask("what's on the shopping list?")))
+        self.assertIn("Ticked eggs off the shopping list", self.run_async(ask("tick off eggs")))
+        items, where = self.run_async(s.tasks.shopping())
+        self.assertEqual((items, where), (["milk", "2 loaves of bread"], "Home Assistant"))
+        self.run_async(s.writer.flush())
+        self.assertIn("- [x] Sort the boiler service", self.obsidian.files["Jarvis/To do.md"])
+
+    def test_weekly_review(self):
+        s = self.services
+        s.tasks.add("Book the MOT", datetime.now(TZ).date() + timedelta(days=2))
+        text = self.run_async(s.brief.build_weekly())
+        self.assertTrue(text.startswith("**Weekly review — week of"))
+        self.assertIn("**To do**\n- Book the MOT", text)
+        self.assertEqual(self.run_async(s.brief.run_weekly(force=True)), "sent")
+        self.run_async(s.writer.flush())
+        self.assertTrue(any(p.startswith("Journal/Weekly/") for p in self.obsidian.files))
+        self.assertTrue(s.db.one("SELECT 1 FROM chat_messages WHERE content LIKE '**Weekly review%'"))
+        self.settings.weekly_review = "off"
+        self.assertFalse(s.brief.weekly_due())
+
     def test_evening_preview(self):
         s = self.services
         self.settings.brief_ha_entities = ["sensor.bin_collection"]

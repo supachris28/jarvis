@@ -49,6 +49,8 @@ def in_quiet_hours(now: datetime, spec: str) -> bool:
 # Each notification has a category you can switch off, or let through quiet hours, in Alerts → Settings.
 CATEGORIES = {
     "brief":     {"label": "Morning brief",                   "on": True,  "quiet": False, "chat": True},
+    "weekly":    {"label": "Weekly review (Sunday evening)",  "on": True,  "quiet": False, "chat": True},
+    "people":    {"label": "Before you meet someone",          "on": True,  "quiet": True,  "chat": True},
     "evening":   {"label": "Evening preview of tomorrow",     "on": True,  "quiet": False, "chat": True},
     "reminders": {"label": "Your reminders",                  "on": True,  "quiet": False, "chat": False},
     "calendar":  {"label": "Upcoming calendar events",        "on": True,  "quiet": True,  "chat": False},
@@ -67,7 +69,7 @@ CATEGORIES = {
     "system":    {"label": "Jarvis problems (e.g. Google sign-in)", "on": True, "quiet": True, "chat": False},
 }
 # "chat": also post it in the chat timeline. The brief and vault save reports post their own (fuller) messages there.
-CHAT_SELF_POSTED = {"brief", "evening", "saves", "welcome"}
+CHAT_SELF_POSTED = {"brief", "evening", "saves", "welcome", "weekly"}
 # "quiet": True = held during quiet hours (and counted in the hourly cap); False = always delivered at once.
 
 

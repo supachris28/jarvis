@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 BRIEF = re.compile(r"\b(morning brief|daily brief|brief me|my brief|good morning|what'?s my day|plan for today)\b",
                    re.IGNORECASE)
 
+WEEKLY = re.compile(r"\b(weekly review|week ahead|plan (?:my|the) week|my week|review (?:my|the) week)\b", re.I)
 EVENING = re.compile(r"\b(evening (?:brief|preview)|tomorrow'?s (?:brief|preview)|preview (?:of )?tomorrow|"
                      r"prepare (?:me )?for tomorrow|ready for tomorrow|what do i need (?:for|to know about) tomorrow)\b",
                      re.IGNORECASE)
@@ -174,6 +175,7 @@ class Assistant:
         self.settings = settings
         self.deliveries = None  # Deliveries, attached by Services
         self.deadlines = None  # Deadlines, attached by Services
+        self.tasks = None  # Tasks (to-dos and shopping), attached by Services
         self.db = db
         self.llm = llm
         self.vault = vault
@@ -274,6 +276,13 @@ class Assistant:
             async for event in self.handle_reminder(prompt):
                 yield event
             return
+        if self.brief is not None and WEEKLY.search(prompt) and not is_agenda_question(prompt, datetime.now(self.settings.tz).date()):
+            yield {"type": "meta", "route": "brief"}
+            text = await self.brief.build_weekly()
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
+            return
         if self.brief is not None and EVENING.search(prompt):
             yield {"type": "meta", "route": "brief"}
             text = await self.brief.build_evening()
@@ -285,6 +294,14 @@ class Assistant:
             async for event in self.handle_brief(prompt):
                 yield event
             return
+        if self.tasks is not None:
+            answer = await self.tasks.handle(prompt)
+            if answer:
+                yield {"type": "meta", "route": "tasks"}
+                yield {"type": "token", "text": answer}
+                self.save_turn(prompt, answer)
+                yield {"type": "done"}
+                return
         if self.deliveries is not None and COLLECT_QUESTION.search(prompt):
             lines = self.deliveries.ready_lines()
             text = ("**Ready to collect**\n" + "\n".join(f"- {line}" for line in lines)) if lines else \

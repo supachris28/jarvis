@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from urllib.parse import quote
 from datetime import date, datetime, timedelta
 
 import httpx
@@ -56,6 +57,9 @@ class Brief:
         self.on_brief = None  # async callback(markdown) set by Services (posts to chat)
         self.on_evening = None  # the same for the evening preview
         self.deadlines = None  # Deadlines, set by Services
+        self.tasks = None  # Tasks, set by Services
+        self.people = None  # People, set by Services
+        self.on_weekly = None  # posts the weekly review in the chat
         self.birthday_source = None
         self.deliveries = None  # Deliveries, set by Services  # async () -> list[Birthday], set by Services (Assistant.birthdays)
 
@@ -203,6 +207,10 @@ class Brief:
             sections.append(("Reminders and home", [
                 f"{datetime.fromtimestamp(r['due'], tz):%H:%M} — {'🏠 ' if r['kind'] == 'ha' else ''}{r['text']}"
                 + (" (needs your OK)" if r["status"] == "proposed" else "") for r in due]))
+        if self.tasks is not None:
+            todo = self.tasks.due_soon(0)
+            if todo:
+                sections.append(("To do today", self.tasks.lines(todo)))
         waiting = self.db.all("SELECT title, start FROM event_proposals WHERE status = 'pending' ORDER BY start LIMIT 5")
         proposed = self.db.all("SELECT text FROM scheduled WHERE status = 'proposed' LIMIT 5")
         if waiting or proposed:
@@ -274,6 +282,10 @@ class Brief:
             sections.append(("Reminders and home", [
                 f"{datetime.fromtimestamp(r['due'], tz):%H:%M} — {'🏠 ' if r['kind'] == 'ha' else ''}{r['text']}"
                 + (" (needs your OK)" if r["status"] == "proposed" else "") for r in due]))
+        if self.tasks is not None:
+            todo = [t for t in self.tasks.due_soon(1) if t["due"] == tomorrow.isoformat()]
+            if todo:
+                sections.append(("To do tomorrow", self.tasks.lines(todo)))
         if self.deadlines is not None:
             due = [d for d in self.deadlines.upcoming(1) if d["days"] == 1]
             if due:
@@ -297,6 +309,105 @@ class Brief:
         diag.event("brief", f"evening preview built with {len(sections)} section(s)", sections=[t for t, _ in sections])
         body = "\n\n".join(f"**{title}**\n" + "\n".join(f"- {line}" for line in lines) for title, lines in sections)
         return f"**Tomorrow — {tomorrow:%A %d %B}**\n\n{body}"
+
+    async def build_weekly(self, day: date | None = None) -> str:
+        """Sunday evening: the week ahead and the loose ends, plus a short look back at the last seven days."""
+        tz = self.settings.tz
+        today = day or datetime.now(tz).date()
+        start = today + timedelta(days=1) if today.weekday() == 6 else today
+        end = start + timedelta(days=7)
+        sections: list[tuple[str, list[str]]] = []
+        days = []
+        for n in range((end - start).days):
+            d = start + timedelta(days=n)
+            events = self.events_on(d)
+            if events:
+                days.append(f"**{d:%a} {d.day} {d:%b}**: " + "; ".join(e.replace(" — ", " ", 1)
+                                                                    if " — " in e else e for e in events[:4])
+                            + (f" (+{len(events) - 4} more)" if len(events) > 4 else ""))
+        sections.append(("The week ahead", days or ["Nothing in the calendar."]))
+        if self.tasks is not None:
+            todo = [t for t in self.tasks.open() if t["overdue"] or (t["due"] and t["due"] < end.isoformat())]
+            undated = [t for t in self.tasks.open() if not t["due"]]
+            lines = self.tasks.lines(todo)
+            if undated:
+                lines.append(f"…and {len(undated)} without a date: " + ", ".join(t["text"] for t in undated[:5])
+                             + ("…" if len(undated) > 5 else ""))
+            if lines:
+                sections.append(("To do", lines))
+        if self.deadlines is not None:
+            coming = self.deadlines.lines(14)
+            if coming:
+                sections.append(("Renewals and deadlines (next fortnight)", coming))
+            waiting = self.deadlines.waiting_lines()
+            if waiting:
+                sections.append(("Waiting on a reply", waiting[:6]))
+        birthdays = await self.birthdays(today, days=14)
+        if birthdays:
+            sections.append(("Birthdays (next fortnight)", birthdays))
+        if self.deliveries is not None:
+            parcels = [line for line in self.deliveries.summary_lines() if "Delivered" not in line]
+            if parcels:
+                sections.append(("Parcels", parcels[:8]))
+        if self.people is not None:
+            try:
+                asks = (await self.people.directory())["prompts"][:3]
+            except Exception as error:  # noqa: BLE001 — the review still goes out
+                diag.debug("brief", f"people prompts unavailable: {error}")
+                asks = []
+            if asks:
+                sections.append(("Tell me more about", [f"{p['name']} — {p['why']} ([add details](/#people?p="
+                                                        f"{quote(p['path'], safe='')}))" for p in asks]))
+        # looking back
+        week_ago = time.time() - 7 * 86400
+        back = []
+        past = self.db.one("SELECT COUNT(*) n FROM events WHERE status != 'cancelled' AND start >= ? AND start < ?",
+                           ((today - timedelta(days=7)).isoformat(), today.isoformat()))["n"]
+        if past:
+            back.append(f"{past} calendar event(s)")
+        mail = self.db.one("SELECT COUNT(*) n FROM emails WHERE bulk = 0 AND outgoing = 0 AND ts > ?", (week_ago,))["n"]
+        if mail:
+            back.append(f"{mail} personal email(s)")
+        if self.tasks is not None:
+            done = self.db.one("SELECT COUNT(*) n FROM tasks WHERE done > ?", (week_ago,))["n"]
+            if done:
+                back.append(f"{done} to-do(s) ticked off")
+        saved = self.db.one("SELECT COUNT(*) n FROM vault_saves WHERE ts > ?", (week_ago,))["n"]
+        if saved:
+            back.append(f"{saved} note(s) saved to your vault")
+        if back:
+            sections.append(("Last week", [", ".join(back) + "."]))
+        body = "\n\n".join(f"**{title}**\n" + "\n".join(f"- {line}" for line in lines) for title, lines in sections)
+        return f"**Weekly review — week of {start:%a} {start.day} {start:%B}**\n\n{body}"
+
+    def weekly_due(self) -> bool:
+        spec = (self.settings.weekly_review or "").strip().casefold()
+        if spec in ("", "off", "none"):
+            return False
+        match = re.match(r"(mon|tue|wed|thu|fri|sat|sun)\w*\s+(\d{1,2})[:.](\d{2})", spec)
+        weekday, hour, minute = (["mon", "tue", "wed", "thu", "fri", "sat", "sun"].index(match.group(1)),
+                                 int(match.group(2)), int(match.group(3))) if match else (6, 18, 0)
+        now = datetime.now(self.settings.tz)
+        return now.weekday() == weekday and (now.hour, now.minute) >= (hour, minute) and \
+            not self.db.get(f"weekly.sent.{now:%Y-%m-%d}")
+
+    async def run_weekly(self, force: bool = False) -> str:
+        if not force and not self.weekly_due():
+            return "not due"
+        today = datetime.now(self.settings.tz).date()
+        text = await self.build_weekly(today)
+        iso = today.isocalendar()
+        key = f"{iso[0]}-W{iso[1] + (1 if today.weekday() == 6 else 0):02d}"
+        self.db.set(f"weekly.{key}", text)
+        self.db.queue_note("weekly", key)
+        lines = [line for line in text.splitlines() if line.startswith("- ")][:8]
+        await self.notifier.notify("Weekly review", "\n".join(one_line(line, 110) for line in lines) or "A quiet week.",
+                                   3, self.settings.public_url.rstrip("/") + "/#chat", dedupe=f"weekly:{today}",
+                                   tags="calendar", category="weekly")
+        if self.on_weekly:
+            await self.on_weekly(text)
+        self.db.set(f"weekly.sent.{today}", True)
+        return "sent"
 
     def evening_due(self) -> bool:
         spec = (self.settings.evening_time or "").strip().casefold()

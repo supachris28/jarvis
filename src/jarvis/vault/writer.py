@@ -77,6 +77,8 @@ class VaultWriter:
             "inbox": self.render_inbox,
             "contact": self.render_contact,
             "reminders": self.render_reminders,
+            "tasks": self.render_tasks,
+            "weekly": self.render_weekly,
             "home_names": self.render_home_names,
         }
         self.on_saved: SavedCallback | None = None
@@ -479,6 +481,28 @@ class VaultWriter:
             intro="Reminders and scheduled home actions. Tick an open item here to cancel it; Jarvis picks that up.",
             summary=f"Reminders: {len(rows)} open" + (f", next — {rows[0]['text']} ({when(rows[0]['due'])})" if rows else ""),
         )
+
+    async def render_tasks(self, _key: str = "all") -> NoteSpec:
+        rows = self.db.all("SELECT * FROM tasks WHERE list = 'todo' AND (done IS NULL OR done > ?) "
+                           "ORDER BY done IS NOT NULL, due = '', due, id", (time.time() - 7 * 86400,))
+        lines = [f"- [{'x' if r['done'] else ' '}] {r['text']}" + (f" 📅 {r['due']}" if r["due"] else "")
+                 + (f" ✅ {datetime.fromtimestamp(r['done'], self.tz):%Y-%m-%d}" if r["done"] else "") for r in rows]
+        open_count = sum(1 for r in rows if not r["done"])
+        return NoteSpec(
+            path="Jarvis/To do.md", title="To do",
+            defaults={"type": "tasks", "tags": ["jarvis", "tasks"]},
+            blocks=[Block("tasks", "\n".join(lines) or "- Nothing to do.")],
+            intro="Your to-do list from Jarvis (add, tick and snooze in Jarvis → Plan, or say “I need to …”).",
+            summary=f"To do: {open_count} open")
+
+    async def render_weekly(self, key: str) -> NoteSpec | None:
+        text = self.db.get(f"weekly.{key}")
+        if not text:
+            return None
+        body = text.split("\n", 2)[-1].strip()
+        return NoteSpec(path=f"Journal/Weekly/{key}.md", title=f"Weekly review {key}",
+                        defaults={"type": "weekly-review", "tags": ["jarvis", "review"]},
+                        blocks=[Block("weekly", body)], summary=f"Weekly review {key}")
 
     async def render_home_names(self, _key: str = "all") -> NoteSpec:
         rows = self.db.all("SELECT alias, entity_id FROM ha_aliases WHERE source = 'chat' ORDER BY alias")

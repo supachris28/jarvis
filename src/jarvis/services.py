@@ -28,6 +28,8 @@ from .pipelines.brief import Brief
 from .pipelines.contacts import ContactsPipeline
 from .pipelines.birthdays import BirthdayReminders
 from .pipelines.deadlines import Deadlines
+from .pipelines.tasks import Tasks
+from .pipelines.people import People
 from .pipelines.deliveries import Deliveries
 from .pipelines.events import EventFinder
 from .pipelines.scheduled import Scheduler
@@ -141,6 +143,7 @@ class Services:
         self.brief = Brief(settings, self.db, self.ha, self.scheduler, self.llm, self.notifier)
         self.brief.on_brief = self.post_brief
         self.brief.on_evening = self.post_evening
+        self.brief.on_weekly = self.post_weekly
         self.writer.on_saved = self.announce_saves
         self.assistant = Assistant(settings, self.db, self.llm, self.vault, self.writer, self.gmail,
                                    self.calendar, self.drive, self.events, self.scheduler, self.brief, self.ha,
@@ -149,6 +152,10 @@ class Services:
         self.assistant.deadlines = self.brief.deadlines = self.deadlines
         self.brief.birthday_source = self.assistant.birthdays  # contacts + People notes + vault mentions
         self.hooks = Hooks(self)
+        self.tasks = Tasks(settings, self.db, self.ha)
+        self.assistant.tasks = self.brief.tasks = self.tasks
+        self.people = People(settings, self.db, self.vault, self.writer, self.assistant)
+        self.brief.people = self.people
         self.birthday_reminders = BirthdayReminders(settings, self.notifier, self.vault, self.assistant.birthdays)
         self.ha.alias_source = self.assistant.home_names  # "gas water heater" → water_heater.thermostat1
         self._learn_home_names_from_captures()
@@ -168,6 +175,8 @@ class Services:
             Job("brief", 60, self.brief.run, f"Morning brief at {settings.brief_time}"),
             Job("backup", 300, lambda: self.backup.run(force=self.jobs["backup"].trigger.is_set()),
                 f"Back up Jarvis's database at {settings.backup_time or 'off'} (server + Nextcloud)"),
+            Job("people", 600, lambda: self.people.meeting_prep(self.notifier), "Before-you-meet cards (2 hours ahead)"),
+            Job("weekly", 300, self.brief.run_weekly, f"Weekly review ({settings.weekly_review})"),
             Job("evening", 60, self.brief.run_evening, f"Evening preview of tomorrow at {settings.evening_time or 'off'}"),
             Job("events", 600, self.scan_events, "Find events in email (model, daily budget)"),
             Job("birthdays", 3600, self.birthday_reminders.run, "Birthday heads-up a week (and a day) before"),
@@ -216,6 +225,11 @@ class Services:
             return
         self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
                         (time.time(), text, diag.current_trace_id()))
+
+    async def post_weekly(self, text: str) -> None:
+        if self.notifier.in_chat("weekly"):
+            self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, ?)",
+                            (time.time(), text, diag.current_trace_id()))
 
     async def post_evening(self, text: str) -> None:
         if not self.notifier.in_chat("evening"):

@@ -225,6 +225,7 @@ class FakeHomeAssistant:
     TOKEN = "ha-token"
 
     def __init__(self) -> None:
+        self.todo: dict[str, list[dict]] = {}
         self.calls: list[tuple[str, str, dict]] = []
         self.states = [
             {"entity_id": "light.kitchen_ceiling", "state": "on", "attributes": {"friendly_name": "Kitchen Ceiling"}},
@@ -272,7 +273,20 @@ class FakeHomeAssistant:
             if denied(request):
                 return denied(request)
             body = await request.json()
-            self.calls.append((request.path_params["domain"], request.path_params["service"], body))
+            domain, name = request.path_params["domain"], request.path_params["service"]
+            self.calls.append((domain, name, body))
+            if domain == "todo":   # to-do lists (the shopping list)
+                items = self.todo.setdefault(body["entity_id"], [])
+                if name == "add_item":
+                    items.append({"summary": body["item"], "status": "needs_action"})
+                elif name == "update_item":
+                    for item in items:
+                        if item["summary"] == body["item"]:
+                            item["status"] = body.get("status", item["status"])
+                elif name == "get_items":
+                    wanted = body.get("status")
+                    return JSONResponse({"changed_states": [], "service_response": {body["entity_id"]: {"items": [
+                        i for i in items if not wanted or i["status"] == wanted]}}})
             return JSONResponse([])
 
         async def history(request: Request):

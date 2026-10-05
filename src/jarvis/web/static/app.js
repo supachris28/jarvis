@@ -246,6 +246,7 @@ async function boot() {
   if (!lightsMounted) { Lights.mount($("#visor")); lightsMounted = true; checkHealth(); setInterval(checkHealth, 600000); }
   route();
   await loadHistory();
+  if (session.version) { announceUpdate(session.version); $("#status-version").textContent = `— you're on v${session.version}`; }
   const item = takeIncoming();
   if (item && item.ask) sendPrompt(item.ask);
   else if (item) showSharedImage(item);
@@ -268,6 +269,8 @@ function route() {
   if (view === "notifications") loadNotifications();
   if (view === "changes") loadChanges();
   if (view === "plan") loadPlan();
+  if (view === "whatsnew") loadChangelog();
+  if (view === "people") loadPeople(new URLSearchParams(location.hash.split("?")[1] || "").get("p"));
   if (view === "logs") loadLogs();
   if (view === "email") {
     const params = new URLSearchParams(location.hash.split("?")[1] || "");
@@ -863,6 +866,7 @@ async function loadPlan() {
   renderHistory(data.history || []);
   loadDeliveries();
   loadDeadlines();
+  loadTasks();
   await loadEvents();
 }
 async function loadEvents() {
@@ -901,6 +905,186 @@ async function loadEvents() {
   if (!data.items.length && !$("#action-proposals").childElementCount) list.innerHTML = '<p class="muted">Nothing waiting. Events found in your email and home actions you ask for appear here.</p>';
   await loadMuted();
 }
+/* ---------- what's new ---------- */
+async function loadChangelog() {
+  const data = await (await api("/api/changelog")).json();
+  $("#whatsnew-version").textContent = `v${data.version}`;
+  $("#whatsnew").innerHTML = markdown(data.markdown.replace(/^# .*\n/, ""));
+  store.set("jarvis.seenVersion", data.version);
+}
+/* after an update, a note in the chat (once per version, per device) */
+function announceUpdate(version) {
+  const seen = store.get("jarvis.seenVersion", "");
+  if (!seen) { store.set("jarvis.seenVersion", version); return; }   // first visit on this device: nothing to announce
+  if (seen === version) return;
+  const note = addMessage("activity", `✨ **Jarvis updated to v${version}.** [See what's new](#whatsnew)`);
+  note.classList.add("update-note");
+  store.set("jarvis.seenVersion", version);
+}
+
+/* ---------- people and families ---------- */
+let peopleData = null;
+function personForm(p = {}, compact = false) {
+  const v = (x) => esc(Array.isArray(x) ? x.join(", ") : (x || ""));
+  return `
+    ${p.path ? "" : `<label>Name <input name="name" required placeholder="e.g. Emily Topliss"></label>`}
+    <label>How you know them <input name="relation" value="${v(p.relation)}" placeholder="friend, brother, colleague…"></label>
+    <label>Birthday <input name="birthday" value="${v(p.birthday_text ? p.birthday : "")}" placeholder="12 March 1986 (year optional)"></label>
+    <label>Family <input name="family" value="${v(p.family)}" placeholder="family name, e.g. Topliss"></label>
+    <label>Partner <input name="partner" value="${v(p.partner)}" placeholder="name"></label>
+    <label>Children <input name="children" value="${v(p.children)}" placeholder="names, separated by commas"></label>
+    ${compact ? "" : `<label>Parents <input name="parents" value="${v(p.parents)}" placeholder="names"></label>
+    <label>Phone <input name="phone" value="${v(p.phone)}"></label>`}
+    <div class="row-actions"><button type="submit">Save</button>
+      ${compact ? '<button type="button" class="ghost" data-skip>Don\'t ask about them</button>' : ""}
+      <span class="muted small" data-status></span></div>`;
+}
+function formFields(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  Object.keys(data).forEach((k) => { if (typeof data[k] === "string") data[k] = data[k].trim(); });
+  return data;
+}
+async function savePerson(form, path) {
+  const fields = formFields(form);
+  const status = form.querySelector("[data-status]");
+  status.textContent = "Saving…";
+  const r = await api("/api/people", { method: "POST", body: JSON.stringify(path ? { path, ...fields } : fields) });
+  const data = await r.json();
+  status.textContent = r.ok ? "Saved." : (data.error || "Couldn't save.");
+  return r.ok ? data : null;
+}
+function personRow(p) {
+  const bits = [p.relation, p.family && `${p.family} family`].filter(Boolean).join(" · ");
+  return `<a class="row person-row" href="#people?p=${encodeURIComponent(p.path)}">
+    <div><strong>${esc(p.name)}</strong>${bits ? ` <span class="muted small">${esc(bits)}</span>` : ""}
+      <div class="muted small">${p.birthday_text ? `🎂 ${esc(p.birthday_text)}` : ""}${p.birthday_text && p.last_contact_text ? " · " : ""}${p.last_contact_text ? `last in touch ${esc(p.last_contact_text)}` : ""}</div></div>
+    ${p.contact_count ? `<span class="tag">${p.contact_count}</span>` : ""}</a>`;
+}
+async function loadPeople(path) {
+  $("#people-index").classList.toggle("hidden", !!path);
+  $("#person-view").classList.toggle("hidden", !path);
+  if (path) return loadPerson(path);
+  peopleData = await (await api("/api/people")).json();
+  $("#people-prompts").innerHTML = peopleData.prompts.map((p) => `
+    <div class="card prompt" data-path="${esc(p.path)}"><div><strong>Tell me about ${esc(p.name)}</strong>
+      <div class="muted small">${esc(p.why)}</div></div><form class="person-form">${personForm(peopleData.people.find((x) => x.path === p.path) || p, true)}</form></div>`).join("");
+  $("#family-list").innerHTML = peopleData.families.map((f) => `
+    <div class="card family"><strong>${esc(f.name)}</strong>
+      <ul>${f.members.map((m) => `<li><a href="#people?p=${encodeURIComponent(m.path)}">${esc(m.name)}</a>
+        ${m.relation ? `<span class="muted small">${esc(m.relation)}</span>` : ""}
+        ${m.birthday_text ? `<div class="muted small">🎂 ${esc(m.birthday_text)}</div>` : ""}</li>`).join("")}</ul></div>`).join("")
+    || '<p class="muted small">No families yet — set a family name on someone (and their partner and children) to group them.</p>';
+  renderPeopleList();
+  $("#person-new").innerHTML = personForm({}, false);
+}
+function renderPeopleList() {
+  const q = $("#people-search").value.trim().toLowerCase();
+  const list = (peopleData ? peopleData.people : []).filter((p) => !q || `${p.name} ${p.relation} ${p.family}`.toLowerCase().includes(q));
+  $("#people-list").innerHTML = list.slice(0, 150).map(personRow).join("") || '<p class="muted">Nobody yet.</p>';
+}
+$("#people-search").addEventListener("input", renderPeopleList);
+$("#people-prompts").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const card = event.target.closest("[data-path]");
+  if (await savePerson(event.target, card.dataset.path)) setTimeout(() => loadPeople(), 700);
+});
+$("#people-prompts").addEventListener("click", async (event) => {
+  if (!event.target.matches("[data-skip]")) return;
+  const card = event.target.closest("[data-path]");
+  await api("/api/people", { method: "POST", body: JSON.stringify({ path: card.dataset.path, skip: true }) });
+  card.remove();
+});
+$("#person-new").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const saved = await savePerson(event.target, "");
+  if (saved && saved.path) location.hash = `#people?p=${encodeURIComponent(saved.path)}`;
+});
+async function loadPerson(path) {
+  $("#person-name").textContent = "Loading…";
+  const r = await api(`/api/people/one?path=${encodeURIComponent(path)}`);
+  const p = await r.json();
+  if (!r.ok) { $("#person-name").textContent = p.error || "Not found."; return; }
+  $("#person-name").textContent = p.name;
+  $("#person-sub").textContent = [p.relation, p.family && `${p.family} family`, p.last_contact_text && `last in touch ${p.last_contact_text}`].filter(Boolean).join(" · ");
+  $("#person-note").href = wikiHref(path.replace(/\.md$/, ""));
+  $("#person-brief").innerHTML = markdown(p.briefing || "");
+  $("#person-form").innerHTML = personForm(p, false);
+  $("#person-form").dataset.path = path;
+  const more = [];
+  if (p.upcoming.length) more.push(`<div class="card"><strong>Coming up</strong><ul>${p.upcoming.map((e) => `<li>${esc(e.start.slice(0, 16).replace("T", " "))} — ${esc(e.summary)}</li>`).join("")}</ul></div>`);
+  if (p.emails.length) more.push(`<div class="card"><strong>Recent email</strong><ul>${p.emails.map((e) => `<li><a href="${esc(e.email_url)}">${esc(e.subject || "(no subject)")}</a> <span class="muted small">${esc(e.when)}</span></li>`).join("")}</ul></div>`);
+  if (p.tasks.length) more.push(`<div class="card"><strong>Your to-dos</strong><ul>${p.tasks.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`);
+  $("#person-more").innerHTML = more.join("");
+}
+$("#person-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const path = event.target.dataset.path;
+  if (await savePerson(event.target, path)) setTimeout(() => loadPerson(path), 500);
+});
+$("#person-back").addEventListener("click", () => { location.hash = "#people"; });
+
+/* ---------- to-dos and shopping ---------- */
+async function loadTasks() {
+  const data = await (await api("/api/tasks")).json();
+  const today = new Date().toISOString().slice(0, 10);
+  $("#task-list").innerHTML = data.tasks.map((t) => `
+    <div class="row task ${t.overdue ? "overdue" : ""} ${t.snoozed && t.snoozed > today ? "snoozed" : ""}" data-task="${t.id}">
+      <label class="check"><input type="checkbox" data-task-done> <span>${esc(t.text)}</span></label>
+      <span class="row-actions">
+        ${t.due_text ? `<span class="tag ${t.overdue ? "warn" : ""}">${t.overdue ? "was due " : ""}${esc(t.due_text)}</span>` : ""}
+        ${t.snoozed && t.snoozed > today ? `<span class="tag">snoozed</span>` : ""}
+        <select data-task-snooze aria-label="Snooze"><option value="">Snooze…</option><option value="tomorrow">Tomorrow</option>
+          <option value="week">Next week</option></select>
+        <button class="ghost" data-task-delete title="Delete" aria-label="Delete">✕</button>
+      </span></div>`).join("") || '<p class="muted">Nothing to do. Add one above, or say “I need to …” in chat.</p>';
+  $("#shopping-where").textContent = data.shopping_problem ? `— ${data.shopping_problem}`
+    : `— ${data.shopping.length} item(s)${data.shopping_where ? `, kept in ${data.shopping_where}` : ""}`;
+  $("#shopping-list").innerHTML = data.shopping.map((item) => `
+    <div class="row"><label class="check"><input type="checkbox" data-shop="${esc(item)}"> <span>${esc(item)}</span></label></div>`).join("")
+    || '<p class="muted small">Empty. Say “add milk to the shopping list”.</p>';
+}
+$("#task-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = $("#task-input").value.trim();
+  if (!text) return;
+  await api("/api/tasks", { method: "POST", body: JSON.stringify({ text, due: $("#task-due").value }) });
+  $("#task-input").value = ""; $("#task-due").value = "";
+  loadTasks();
+});
+$("#task-list").addEventListener("change", async (event) => {
+  const row = event.target.closest("[data-task]");
+  if (!row) return;
+  if (event.target.matches("[data-task-done]")) {
+    row.classList.add("done");
+    await api(`/api/tasks/${row.dataset.task}`, { method: "POST", body: JSON.stringify({ done: true }) });
+    setTimeout(loadTasks, 600);
+  } else if (event.target.matches("[data-task-snooze]") && event.target.value) {
+    await api(`/api/tasks/${row.dataset.task}`, { method: "POST", body: JSON.stringify({ snoozed: event.target.value }) });
+    loadTasks();
+  }
+});
+$("#task-list").addEventListener("click", async (event) => {
+  const row = event.target.closest("[data-task]");
+  if (!row || !event.target.matches("[data-task-delete]")) return;
+  await api(`/api/tasks/${row.dataset.task}`, { method: "DELETE" });
+  loadTasks();
+});
+$("#shopping-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = $("#shopping-input").value.trim();
+  if (!text) return;
+  const r = await api("/api/tasks", { method: "POST", body: JSON.stringify({ text, list: "shopping" }) });
+  if (!r.ok) { $("#shopping-where").textContent = `— ${(await r.json()).error}`; return; }
+  $("#shopping-input").value = "";
+  loadTasks();
+});
+$("#shopping-list").addEventListener("change", async (event) => {
+  const item = event.target.dataset.shop;
+  if (!item) return;
+  await api("/api/shopping/tick", { method: "POST", body: JSON.stringify({ item }) });
+  setTimeout(loadTasks, 400);
+});
+
 /* ---------- renewals, deadlines and replies you're waiting for ---------- */
 async function loadDeadlines() {
   const data = await (await api("/api/deadlines")).json();

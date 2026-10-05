@@ -228,6 +228,18 @@ You need Docker Desktop on the PC.
 - Every morning at `BRIEF_TIME`, Jarvis sends an ntfy notification, posts the full brief in the chat and adds it to the day's journal note in Obsidian.
 - Every evening at `EVENING_TIME` (default 21:00, `off` to disable) it sends a preview of tomorrow: calendar (flagging an early start), booking references and things to bring from event descriptions, reminders, parcels expected, birthdays, weather and the brief's Home Assistant readings. Ask "evening preview" in chat to see it any time.
 
+### To-dos, shopping, weekly review, people
+
+- **To-dos**: “I need to … (by Friday)”, “todo: …”, “add … to my to-do list”; Plan → To do to tick, snooze and add.
+  Mirrored to `Jarvis/To do.md`. Today's and overdue in the morning brief, tomorrow's in the evening preview.
+- **Shopping** uses the Home Assistant to-do list `HA_SHOPPING_LIST` (default `todo.shopping_list`, the built-in
+  Shopping List integration); `off` keeps it in Jarvis.
+- **Weekly review** at `WEEKLY_REVIEW` (default `sun 18:00`): notification, chat and `Journal/Weekly/<year>-W<week>.md`.
+- **People tab**: People notes with `relation`, `family`, `birthday`, `partner`, `children`, `parents`, `phone`
+  properties, linked both ways; families grouped; prompts for regular contacts Jarvis knows little about; a
+  "before you meet" notification two hours before events with people you know ("Before you meet someone").
+- **What's new** (Status) shows `src/jarvis/CHANGELOG.md`; add an entry for each version.
+
 ### Home Assistant triggers
 
 Status → **Home Assistant triggers** shows a token and an example `rest_command` + automations. Home Assistant can

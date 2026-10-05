@@ -403,6 +403,117 @@ async def vault_note_append(request: Request) -> Response:
     return JSONResponse({"ok": True, "change_id": change})
 
 
+async def changelog(request: Request) -> Response:
+    text = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text(encoding="utf-8")
+    return JSONResponse({"version": __version__, "markdown": text})
+
+
+async def people_list(request: Request) -> Response:
+    return JSONResponse(await request.app.state.services.people.directory())
+
+
+def _person_path(path: str) -> str | None:
+    path = path.strip()[:300]
+    parts = path.split("/")
+    if not path.startswith("People/") or not path.endswith(".md") or any(p.startswith(".") or p in ("", "..") for p in parts):
+        return None
+    return path
+
+
+async def person_detail(request: Request) -> Response:
+    path = _person_path(request.query_params.get("path", ""))
+    person = await request.app.state.services.people.person(path) if path else None
+    if not person:
+        return JSONResponse({"error": "Unknown person."}, status_code=404)
+    person["briefing"] = await request.app.state.services.people.briefing(path)
+    return JSONResponse(person)
+
+
+async def person_update(request: Request) -> Response:
+    people = request.app.state.services.people
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    fields = {k: body.get(k) for k in ("relation", "family", "birthday", "partner", "children", "parents", "phone")
+              if k in body}
+    try:
+        if body.get("skip") and _person_path(str(body.get("path", ""))):
+            people.skip(body["path"])
+            return JSONResponse({"ok": True})
+        if body.get("name") and not body.get("path"):
+            return JSONResponse(await people.create(str(body["name"])[:80], fields))
+        path = _person_path(str(body.get("path", "")))
+        if not path:
+            return JSONResponse({"error": "Unknown person."}, status_code=400)
+        return JSONResponse(await people.update(path, fields))
+    except VaultError as error:
+        return JSONResponse({"error": str(error)}, status_code=503)
+
+
+async def tasks_list(request: Request) -> Response:
+    tasks = request.app.state.services.tasks
+    shopping, where, problem = [], "", ""
+    try:
+        shopping, where = await tasks.shopping()
+    except HAError as error:
+        problem = str(error)
+    return JSONResponse({"tasks": tasks.open(include_snoozed=True), "shopping": shopping, "shopping_where": where,
+                         "shopping_problem": problem})
+
+
+async def tasks_change(request: Request) -> Response:
+    tasks = request.app.state.services.tasks
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    if request.method == "DELETE":
+        tasks.delete(request.path_params["id"])
+        return JSONResponse({"ok": True})
+    if "done" in body:
+        return JSONResponse(tasks.complete(request.path_params["id"], bool(body["done"])) or {})
+    return JSONResponse(tasks.update(request.path_params["id"], body) or {})
+
+
+async def tasks_add(request: Request) -> Response:
+    from ..pipelines.tasks import parse_task, split_items
+    tasks = request.app.state.services.tasks
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    text = str((body or {}).get("text", "")).strip()[:300]
+    if not text:
+        return JSONResponse({"error": "Nothing to add."}, status_code=400)
+    if (body or {}).get("list") == "shopping":
+        try:
+            where = await tasks.add_shopping(split_items(text))
+        except HAError as error:
+            return JSONResponse({"error": str(error)}, status_code=503)
+        return JSONResponse({"ok": True, "where": where})
+    parsed = parse_task(f"todo: {text}", tasks.today) or (text[:1].upper() + text[1:], None)
+    due = (body or {}).get("due") or (parsed[1].isoformat() if parsed[1] else "")
+    task = tasks.add(parsed[0])
+    if due:
+        task = tasks.update(task["id"], {"due": due})
+    return JSONResponse(task)
+
+
+async def shopping_tick(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    try:
+        ok = await request.app.state.services.tasks.tick_shopping(str((body or {}).get("item", ""))[:200])
+    except HAError as error:
+        return JSONResponse({"error": str(error)}, status_code=503)
+    return JSONResponse({"ok": ok})
+
+
 async def deadlines_list(request: Request) -> Response:
     deadlines = request.app.state.services.deadlines
     return JSONResponse({"deadlines": deadlines.upcoming(), "waiting": deadlines.waiting(),
@@ -893,6 +1004,14 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/scheduled", scheduled_list),
             Route("/api/email/{thread_id}", email_thread),
             Route("/api/email/{thread_id}/events", email_find_events, methods=["POST"]),
+            Route("/api/changelog", changelog),
+            Route("/api/people", people_list),
+            Route("/api/people/one", person_detail),
+            Route("/api/people", person_update, methods=["POST"]),
+            Route("/api/tasks", tasks_list),
+            Route("/api/tasks", tasks_add, methods=["POST"]),
+            Route("/api/tasks/{id:int}", tasks_change, methods=["POST", "DELETE"]),
+            Route("/api/shopping/tick", shopping_tick, methods=["POST"]),
             Route("/api/deadlines", deadlines_list),
             Route("/api/deadlines/look-back", deadlines_look_back, methods=["POST"]),
             Route("/api/deadlines/{id:int}", deadline_update, methods=["POST"]),

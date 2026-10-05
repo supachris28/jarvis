@@ -1,3 +1,3 @@
 """Jarvis server: a self-hosted personal assistant backed by Ollama and Obsidian."""
 
-__version__ = "0.17.2"
+__version__ = "0.18.0"

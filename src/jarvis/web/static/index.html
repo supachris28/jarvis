@@ -59,6 +59,7 @@
       <nav>
         <a href="#chat" data-view="chat">Chat</a>
         <a href="#plan" data-view="plan">Plan</a>
+        <a href="#people" data-view="people">People</a>
         <a href="#status" data-view="status">Status</a>
         <a href="#notifications" data-view="notifications">Alerts</a>
         <a href="#changes" data-view="changes">Vault</a>
@@ -94,6 +95,22 @@
           <button id="scan-events" class="ghost" title="Fetch new mail and read the last 6 hours of email again for dates">Check email for events</button>
         </div>
 
+        <h3>To do</h3>
+        <form id="task-form" class="toolbar task-form">
+          <input id="task-input" placeholder="Add a to-do (e.g. renew passport by Friday)" autocomplete="off">
+          <input id="task-due" type="date" aria-label="Due (optional)">
+          <button type="submit">Add</button>
+        </form>
+        <div id="task-list" class="list"></div>
+        <details id="shopping-box" class="card">
+          <summary><strong>Shopping list</strong> <span id="shopping-where" class="muted small"></span></summary>
+          <form id="shopping-form" class="toolbar">
+            <input id="shopping-input" placeholder="Add items (milk, eggs, bread)" autocomplete="off">
+            <button type="submit" class="ghost">Add</button>
+          </form>
+          <div id="shopping-list" class="list"></div>
+        </details>
+
         <h3>Reminders and scheduled home actions</h3>
         <div id="scheduled-list" class="list"></div>
 
@@ -117,6 +134,39 @@
           <summary>Senders Jarvis no longer suggests events from</summary>
           <div id="muted-senders" class="list"></div>
         </details>
+      </section>
+
+      <section id="view-people" class="view hidden">
+        <div id="people-index">
+          <div class="toolbar">
+            <h2>People</h2>
+            <input id="people-search" type="search" placeholder="Search people" autocomplete="off">
+          </div>
+          <div id="people-prompts" class="list"></div>
+          <h3>Families</h3>
+          <div id="family-list" class="grid families"></div>
+          <h3>Everyone <span class="muted small">— most in touch first</span></h3>
+          <div id="people-list" class="list"></div>
+          <details class="card"><summary><strong>Add someone</strong></summary>
+            <form id="person-new" class="person-form"></form></details>
+        </div>
+        <div id="person-view" class="hidden">
+          <div class="toolbar">
+            <button id="person-back" class="ghost">← People</button>
+            <a id="person-note" class="button ghost">Open note</a>
+          </div>
+          <h2 id="person-name"></h2>
+          <p id="person-sub" class="muted"></p>
+          <div id="person-brief" class="card"></div>
+          <details class="card" open><summary><strong>Details</strong> <span class="muted small">— saved to their note</span></summary>
+            <form id="person-form" class="person-form"></form></details>
+          <div id="person-more" class="list"></div>
+        </div>
+      </section>
+
+      <section id="view-whatsnew" class="view hidden">
+        <div class="toolbar"><h2>What's new</h2><span id="whatsnew-version" class="tag"></span></div>
+        <div id="whatsnew" class="card note-body"></div>
       </section>
 
       <section id="view-email" class="view hidden">
@@ -166,6 +216,8 @@
           <div class="toolbar"><span id="calendar-status" class="muted small"></span>
             <button id="calendar-save">Save</button></div>
         </details>
+        <a class="card whatsnew-link" href="#whatsnew"><strong>What's new</strong>
+          <span class="muted small" id="status-version"></span></a>
         <details id="hooks-box" class="card">
           <summary><strong>Home Assistant triggers</strong> <span class="muted small">— brief when you come downstairs,
             summary when you get home</span></summary>

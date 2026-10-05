@@ -219,6 +219,27 @@ class HomeAssistant:
         self._states = (0.0, [])
         return await self._request("POST", f"/api/services/{domain}/{service}", body)
 
+    # to-do lists (the shopping list) ---------------------------------------------
+    async def todo_items(self, entity_id: str) -> list[str]:
+        """Items still to get on a Home Assistant to-do list."""
+        result = await self._request("POST", "/api/services/todo/get_items?return_response",
+                                     {"entity_id": entity_id, "status": "needs_action"})
+        response = (result or {}).get("service_response", {}) if isinstance(result, dict) else {}
+        items = (response.get(entity_id) or {}).get("items", []) or []
+        return [str(i.get("summary", "")) for i in items if i.get("summary")]
+
+    async def todo_add(self, entity_id: str, item: str) -> None:
+        await self._request("POST", "/api/services/todo/add_item", {"entity_id": entity_id, "item": item[:200]})
+
+    async def todo_complete(self, entity_id: str, item: str) -> bool:
+        wanted = item.strip().casefold()
+        for name in await self.todo_items(entity_id):
+            if name.casefold() == wanted or wanted in name.casefold():
+                await self._request("POST", "/api/services/todo/update_item",
+                                    {"entity_id": entity_id, "item": name, "status": "completed"})
+                return True
+        return False
+
     # matching -----------------------------------------------------------------
     @staticmethod
     def name_of(state: dict) -> str:
