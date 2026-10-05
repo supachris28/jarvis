@@ -382,6 +382,37 @@ class Services:
         return {"thread_id": thread_id, "subject": messages[0]["subject"] if messages else "",
                 "messages": messages, "gmail_url": thread_url(thread_id, self.db.get("gmail.me", ""))}
 
+    async def rescan_recent_events(self, hours: int = 6) -> dict:
+        """Plan → 'Check email for events': fetch new mail, then read every email from the last `hours` again for
+        events (script first, then the model) — including ones already read, in case they were missed."""
+        from .google.gmail import parse_message
+        try:
+            await self.gmail_pipeline.run()
+        except Exception as error:  # noqa: BLE001 — still re-read what's already here
+            diag.warning("events", f"couldn't fetch new mail before re-checking: {type(error).__name__}: {error}")
+        since = time.time() - hours * 3600
+        rows = self.db.all("SELECT message_id FROM emails WHERE ts > ? ORDER BY ts", (since,))
+        before = {r["id"] for r in self.db.all("SELECT id FROM event_proposals")}
+        read = 0
+        for row in rows:
+            try:
+                message = parse_message(await self.gmail.message(row["message_id"]), self.settings.email_body_limit)
+            except Exception as error:  # noqa: BLE001 — one unreadable email doesn't stop the rest
+                diag.debug("events", f"couldn't re-read {row['message_id']}: {type(error).__name__}")
+                continue
+            self.db.execute("DELETE FROM event_scan WHERE message_id = ?", (message.message_id,))
+            await self.events.on_message(message, notify=False)
+            read += 1
+        queued = self.db.one("SELECT COUNT(*) n FROM event_scan WHERE status = 'pending'")["n"]
+        scan = await self.events.scan_queue(limit=max(1, queued)) if queued else {}
+        new = [self.events.get(r["id"]) for r in self.db.all("SELECT id FROM event_proposals") if r["id"] not in before]
+        result = {"emails": read, "hours": hours,
+                  "proposed": sum(1 for p in new if p and p["status"] == "pending"),
+                  "already_in_calendar": sum(1 for p in new if p and p["status"] == "duplicate"),
+                  "waiting_for_model": scan.get("pending", 0) if scan.get("waiting") else 0}
+        diag.event("events", f"re-checked {read} email(s) from the last {hours} hours: {result['proposed']} new event(s)")
+        return result
+
     async def find_events_in_thread(self, thread_id: str) -> dict:
         """Read an email (conversation) again for events — e.g. one read before Jarvis understood it. Script first;
         anything left goes to the model now if it's available."""

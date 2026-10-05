@@ -1134,10 +1134,22 @@ document.addEventListener("click", async (event) => {
   loadMuted();
 });
 $("#scan-events").addEventListener("click", async (event) => {
-  event.target.disabled = true;
-  await api("/api/jobs/gmail/run", { method: "POST" });
-  await api("/api/jobs/events/run", { method: "POST" });
-  setTimeout(() => { event.target.disabled = false; loadPlan(); }, 4000);
+  const button = event.target;
+  button.disabled = true;
+  $("#events-queue").textContent = "Fetching new mail and re-reading the last 6 hours of email…";
+  Lights.set("looking", "gmail");
+  try {
+    const r = await api("/api/events/rescan", { method: "POST" });
+    const data = await r.json();
+    Lights.flash(r.ok ? "done" : "error");
+    await loadPlan();
+    if (!r.ok) { $("#events-queue").textContent = data.error || "Couldn't check email."; return; }
+    const bits = [`Re-read ${data.emails} email(s) from the last ${data.hours} hours`];
+    bits.push(data.proposed ? `${data.proposed} new event(s) below` : "no new events");
+    if (data.already_in_calendar) bits.push(`${data.already_in_calendar} already in your calendar`);
+    if (data.waiting_for_model) bits.push(`${data.waiting_for_model} waiting for the model on your PC`);
+    $("#events-queue").textContent = bits.join(" · ") + ".";
+  } finally { button.disabled = false; }
 });
 
 /* ---------- status ---------- */

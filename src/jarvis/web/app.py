@@ -434,6 +434,13 @@ async def deadlines_look_back(request: Request) -> Response:
         return JSONResponse({"error": str(error)}, status_code=400)
 
 
+async def events_rescan(request: Request) -> Response:
+    try:
+        return JSONResponse(await request.app.state.services.rescan_recent_events(6))
+    except GoogleError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
 async def email_find_events(request: Request) -> Response:
     thread_id = request.path_params["thread_id"]
     if not re.fullmatch(r"[0-9a-fA-F]{6,32}", thread_id):
@@ -871,6 +878,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/events", events_list),
             Route("/api/events/{id:int}/add", event_add, methods=["POST"]),
             Route("/api/events/add-all", events_add_all, methods=["POST"]),
+            Route("/api/events/rescan", events_rescan, methods=["POST"]),
             Route("/api/events/{id:int}/dismiss", event_dismiss, methods=["POST"]),
             Route("/api/events/senders", event_senders),
             Route("/api/events/senders/unmute", event_sender_unmute, methods=["POST"]),

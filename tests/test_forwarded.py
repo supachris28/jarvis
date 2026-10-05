@@ -157,6 +157,28 @@ class ForwardFlow(IntegrationBase):
         again = self.run_async(s.find_events_in_thread("abc123def"))
         self.assertEqual(again["proposed"], 0, "not proposed twice")
 
+    def test_check_email_rereads_the_last_six_hours(self):
+        s = self.services
+        today = datetime.now(self.settings.tz).date()
+        days = [today + timedelta(days=n) for n in (6, 13, 20)]
+        recent = gmail_message("r1", "tr1", "Chris <chris@example.com>", "Fwd: Rehearsal schedule",
+                               GMAIL_FORWARD.format(d1=days[0], d2=days[1], d3=days[2]), labels=["SENT", "INBOX"],
+                               ts=time.time() - 3600)
+        old = gmail_message("r2", "tr2", "Chris <chris@example.com>", "Fwd: Old schedule",
+                            GMAIL_FORWARD.format(d1=days[0], d2=days[1], d3=days[2]).replace("Annie", "Oliver"),
+                            labels=["SENT", "INBOX"], ts=time.time() - 9 * 3600)
+        s.gmail_pipeline.gmail = s.gmail = FakeGmail([recent, old])
+        s.db.set("gmail.history_id", "1")
+
+        async def history(start):
+            return ["r1", "r2"], "2"
+        s.gmail_pipeline.gmail.history = history
+        self.run_async(s.gmail_pipeline.run())
+        s.db.execute("DELETE FROM event_proposals")  # as if they'd been missed the first time
+        result = self.run_async(s.rescan_recent_events(6))
+        self.assertEqual((result["emails"], result["proposed"]), (1, 3), result)  # only the last 6 hours
+        self.assertEqual(self.run_async(s.rescan_recent_events(6))["proposed"], 0, "not proposed twice")
+
     def test_forwarded_parcel_and_renewal(self):
         s = self.services
         soon = datetime.now(self.settings.tz).date() + timedelta(days=10)
