@@ -1,5 +1,9 @@
 # What's new in Jarvis
 
+## 0.20.0 — 6 October 2026
+- **Swipe a chat card left to dismiss it** (with a mouse, the ✕ in its corner). *Undo* for a few seconds; after that it's gone from the chat on every device.
+- **Updates are posted in the chat**: a card with what's new in the version, saved with the chat so you see it on every device (and can swipe it away).
+
 ## 0.19.1 — 5 October 2026
 - Fixed: people in a recurring event showed as “last in touch today” — only events that have already happened count now, at the time they happened.
 

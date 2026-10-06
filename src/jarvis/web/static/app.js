@@ -297,9 +297,11 @@ function scrollChatToBottom() {
 window.addEventListener("hashchange", route);
 
 /* ---------- chat ---------- */
-function addMessage(role, text = "", trace = "") {
+function addMessage(role, text = "", trace = "", id = 0) {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
+  if (id) el.dataset.id = id;
+  if (trace) el.dataset.trace = trace;
   el.innerHTML = `<div class="body">${role === "user" ? `<p>${esc(text)}</p>` : markdown(text)}</div>`;
   if (role === "assistant" && text) addSpeakButton(el, text);
   if (trace && role !== "user") addDetailsButton(el, trace);
@@ -324,7 +326,7 @@ async function loadHistory() {
   if ($("#messages").childElementCount) return;
   const rows = await (await api("/api/chat/history")).json();
   rows.forEach((r) => {
-    addMessage(r.role, r.content, r.trace);
+    addMessage(r.role, r.content, r.trace, r.id);
     if (r.role === "activity") lastActivityId = Math.max(lastActivityId, r.id);
   });
   chatNeedsScroll = true;
@@ -335,9 +337,88 @@ async function pollActivity() {
   if (document.hidden || $("#app").classList.contains("hidden")) return;
   try {
     const rows = await (await api(`/api/activity?after=${lastActivityId}`)).json();
-    rows.forEach((r) => { addMessage("activity", r.content); lastActivityId = Math.max(lastActivityId, r.id); });
+    rows.forEach((r) => { addMessage("activity", r.content, "", r.id); lastActivityId = Math.max(lastActivityId, r.id); });
   } catch { /* offline */ }
 }
+/* ---------- swipe a card left to dismiss it (✕ on hover with a mouse); Undo for a few seconds ---------- */
+let pendingDismiss = null;
+function finishDismiss() {
+  if (!pendingDismiss) return;
+  const { el, toast, timer } = pendingDismiss;
+  pendingDismiss = null;
+  clearTimeout(timer);
+  toast.remove();
+  const body = el.dataset.id ? { id: Number(el.dataset.id) }
+    : el.dataset.trace ? { trace: el.dataset.trace, role: ["user", "assistant", "activity"].find((r) => el.classList.contains(r)) } : null;
+  el.remove();
+  if (body && (body.id || body.role)) api("/api/chat/dismiss", { method: "POST", body: JSON.stringify(body) }).catch(() => {});
+}
+function dismissCard(el) {
+  finishDismiss();                       // one undo at a time
+  el.classList.add("gone");
+  const height = el.offsetHeight;
+  el.style.height = `${height}px`;
+  requestAnimationFrame(() => { el.classList.add("collapsing"); el.style.height = "0px"; });
+  const toast = document.createElement("div");
+  toast.className = "undo-toast";
+  toast.innerHTML = 'Dismissed <button type="button" class="ghost">Undo</button>';
+  document.body.appendChild(toast);
+  const timer = setTimeout(finishDismiss, 5000);
+  pendingDismiss = { el, toast, timer };
+  toast.querySelector("button").addEventListener("click", () => {
+    if (!pendingDismiss || pendingDismiss.el !== el) return;
+    clearTimeout(timer); toast.remove(); pendingDismiss = null;
+    el.classList.remove("gone", "collapsing"); el.style.height = ""; el.style.transform = ""; el.style.opacity = "";
+  });
+}
+(() => {
+  const list = $("#messages");
+  let start = null, card = null, dx = 0, swiping = false, suppressClick = false;
+  list.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" || event.button > 0) return;
+    card = event.target.closest(".msg");
+    if (!card || card.classList.contains("pending") || event.target.closest("input, textarea, select, audio, video")) { card = null; return; }
+    start = { x: event.clientX, y: event.clientY }; dx = 0; swiping = false;
+  });
+  list.addEventListener("pointermove", (event) => {
+    if (!card || !start) return;
+    const x = event.clientX - start.x, y = event.clientY - start.y;
+    if (!swiping) {
+      if (Math.abs(y) > 12 && Math.abs(y) > Math.abs(x)) { card = null; return; }    // scrolling, not swiping
+      if (x < -12 && Math.abs(x) > Math.abs(y) * 1.4) { swiping = true; card.classList.add("swiping"); try { card.setPointerCapture(event.pointerId); } catch { /* synthetic or ended pointer */ } }
+      else return;
+    }
+    dx = Math.min(0, x);
+    card.style.transform = `translateX(${dx}px)`;
+    card.style.opacity = String(Math.max(0.25, 1 + dx / (card.offsetWidth * 0.9)));
+  });
+  const end = () => {
+    if (!card) return;
+    const el = card; card = null; start = null;
+    el.classList.remove("swiping");
+    if (!swiping) return;
+    suppressClick = true; setTimeout(() => { suppressClick = false; }, 350);
+    if (dx < -Math.min(120, el.offsetWidth * 0.35)) {
+      el.style.transform = `translateX(-${el.offsetWidth + 40}px)`; el.style.opacity = "0";
+      setTimeout(() => dismissCard(el), 180);
+    } else { el.style.transform = ""; el.style.opacity = ""; }
+  };
+  list.addEventListener("pointerup", end);
+  list.addEventListener("pointercancel", end);
+  list.addEventListener("click", (event) => {   // a swipe isn't a tap (tapping your message edits it)
+    if (suppressClick) { event.stopPropagation(); event.preventDefault(); }
+  }, true);
+  list.addEventListener("mouseover", (event) => {   // with a mouse: a ✕ in the corner
+    const el = event.target.closest(".msg");
+    if (!el || el.querySelector(":scope > .msg-dismiss") || el.classList.contains("pending")) return;
+    const x = document.createElement("button");
+    x.type = "button"; x.className = "msg-dismiss"; x.textContent = "✕"; x.title = "Dismiss"; x.setAttribute("aria-label", "Dismiss");
+    x.addEventListener("click", (e) => { e.stopPropagation(); dismissCard(el); });
+    el.appendChild(x);
+  });
+})();
+window.addEventListener("pagehide", finishDismiss);
+
 /* ---------- recall earlier messages: ↑/↓ in the box, or tap one ---------- */
 let recallIndex = -1, recallDraft = "";
 function sentMessages() { return [...document.querySelectorAll("#messages .msg.user")].map((m) => m.dataset.text || "").filter(Boolean); }
@@ -387,7 +468,7 @@ $("#chat-form").addEventListener("submit", async (event) => {
   $("#send").disabled = true;
   stopSpeaking();
   unlockAudio();  // lets a "read me …" reply play on phones even with voice off
-  addMessage("user", message);
+  const asked = addMessage("user", message);
   Lights.set("thinking");
   const bubble = addMessage("assistant", "");
   bubble.classList.add("pending");
@@ -411,7 +492,7 @@ $("#chat-form").addEventListener("submit", async (event) => {
           meta = ev;
           if (ev.route && !["chat", "blocked", "remember", "calendar-add"].includes(ev.route)) Lights.set("looking", ev.route);
         }
-        if (ev.type === "trace") traceId = ev.id;
+        if (ev.type === "trace") { traceId = ev.id; bubble.dataset.trace = asked.dataset.trace = ev.id; }
         if (ev.type === "sources") sources = ev.items || [];
         if (ev.type === "proposals") (ev.items || []).forEach((p) => bubble.appendChild(proposalCard(p)));
         if (ev.type === "actions") (ev.items || []).forEach((a) => bubble.appendChild(actionCard(a)));
@@ -913,14 +994,11 @@ async function loadChangelog() {
   $("#whatsnew").innerHTML = markdown(data.markdown.replace(/^# .*\n/, ""));
   store.set("jarvis.seenVersion", data.version);
 }
-/* after an update, a note in the chat (once per version, per device) */
+/* after an update the server posts a chat card with what's new (saved in the chat, on every device) */
 function announceUpdate(version) {
   const seen = store.get("jarvis.seenVersion", "");
-  if (!seen) { store.set("jarvis.seenVersion", version); return; }   // first visit on this device: nothing to announce
-  if (seen === version) return;
-  const note = addMessage("activity", `✨ **Jarvis updated to v${version}.** [See what's new](#whatsnew)`);
-  note.classList.add("update-note");
   store.set("jarvis.seenVersion", version);
+  if (seen && seen !== version) setTimeout(pollActivity, 1500);   // pick the card up straight away
 }
 
 /* ---------- people and families ---------- */

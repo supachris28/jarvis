@@ -193,3 +193,36 @@ class MeetingTests(PeopleTests):
         self.assertIn("Benny", self.props("People/Ben Topliss.md")["aliases"])
         meetings = {m["event_id"]: m for m in self.run_async(upcoming_meetings(s.people))}
         self.assertEqual([p["name"] for p in meetings["e4"]["people"]], ["Ben Topliss"])
+
+
+class ChatDismissTests(IntegrationBase):
+    def test_swipe_dismiss_removes_the_card(self):
+        s = self.services
+        for role, content, trace in (("activity", "Brief", ""), ("user", "hi", "t1"), ("assistant", "hello", "t1")):
+            s.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (1, ?, ?, ?)", (role, content, trace))
+        app = create_app(self.settings, self.services, start_jobs=False)
+        Auth(s.db).set_password("a very long password")
+        h = {"X-Jarvis": "1"}
+        with TestClient(app, base_url="http://localhost:8080") as client:
+            client.post("/api/login", json={"password": "a very long password"}, headers=h)
+            history = client.get("/api/chat/history").json()
+            brief = next(r for r in history if r["content"] == "Brief")
+            self.assertEqual(client.post("/api/chat/dismiss", json={"id": brief["id"]}, headers=h).status_code, 200)
+            client.post("/api/chat/dismiss", json={"trace": "t1", "role": "assistant"}, headers=h)
+            self.assertEqual([r["content"] for r in client.get("/api/chat/history").json()], ["hi"])
+            self.assertEqual(client.post("/api/chat/dismiss", json={}, headers=h).status_code, 400)
+            self.assertEqual(client.post("/api/chat/dismiss", json={"id": 1}).status_code, 403, "needs the CSRF header")
+
+    def test_new_version_posted_in_chat(self):
+        from jarvis import __version__
+        s = self.services
+        self.assertTrue(s.announce_version())
+        self.assertFalse(s.announce_version(), "once per version")
+        [card] = [r["content"] for r in s.db.all("SELECT content FROM chat_messages WHERE role = 'activity'")]
+        self.assertTrue(card.startswith(f"✨ **Jarvis updated to v{__version__}**\n- "), card)
+        self.assertIn("[All changes](#whatsnew)", card)
+        s.db.set("app.version_announced", "0.18.2")       # several releases since: all of them
+        s.announce_version()
+        card = s.db.one("SELECT content FROM chat_messages ORDER BY id DESC LIMIT 1")["content"]
+        self.assertIn("Partners' children suggested", card)
+        self.assertNotIn("person's page wouldn't open", card, "0.18.2 itself was already announced")

@@ -344,3 +344,18 @@ a.whatsnew-link:hover { border-color: var(--accent); }
 
 .people-search { width: 100%; font-size: 1.05rem; padding: 0.7rem 0.9rem; margin: 0.25rem 0 0.75rem; }
 #note-person { margin: 0.75rem 0; }
+
+/* swipe left to dismiss a chat card */
+#messages .msg { position: relative; touch-action: pan-y; transition: transform .18s ease, opacity .18s ease; }
+#messages .msg.swiping { transition: none; user-select: none; }
+#messages .msg.collapsing { overflow: hidden; margin-top: 0; margin-bottom: 0; transition: height .2s ease, margin .2s ease, opacity .18s; }
+#messages .msg.gone { pointer-events: none; }
+.msg-dismiss { position: absolute; top: -.45rem; right: -.45rem; width: 1.5rem; height: 1.5rem; padding: 0; border-radius: 50%;
+  font-size: .7rem; line-height: 1; background: var(--panel); border: 1px solid var(--line); color: var(--muted); opacity: 0;
+  transition: opacity .15s; }
+.msg:hover > .msg-dismiss, .msg-dismiss:focus-visible { opacity: 1; }
+@media (hover: none) { .msg-dismiss { display: none; } }
+.undo-toast { position: fixed; left: 50%; bottom: calc(5.5rem + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: .35rem .5rem .35rem 1rem;
+  box-shadow: 0 6px 24px rgba(0,0,0,.25); display: flex; gap: .6rem; align-items: center; z-index: 50; font-size: .9rem; }
+.undo-toast button { padding: .3rem .8rem; }

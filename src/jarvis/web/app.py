@@ -884,6 +884,27 @@ async def tts(request: Request) -> Response:
     return Response(audio, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
+async def chat_dismiss(request: Request) -> Response:
+    """Swipe a card out of the chat: one message by id, or a live reply (or your question) by its trace."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    db = request.app.state.services.db
+    try:
+        message_id = int(body.get("id") or 0)
+    except (TypeError, ValueError):
+        message_id = 0
+    if message_id > 0:
+        db.execute("DELETE FROM chat_messages WHERE id = ?", (message_id,))
+    elif body.get("trace") and body.get("role") in ("user", "assistant", "activity"):
+        db.execute("DELETE FROM chat_messages WHERE trace = ? AND role = ?", (str(body["trace"])[:80], body["role"]))
+    else:
+        return JSONResponse({"error": "Which message?"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
 async def chat_clear(request: Request) -> Response:
     request.app.state.services.db.execute("DELETE FROM chat_messages")
     return JSONResponse({"ok": True})
@@ -1010,6 +1031,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/chat", chat, methods=["POST"]),
             Route("/api/chat/history", chat_history),
             Route("/api/chat/clear", chat_clear, methods=["POST"]),
+            Route("/api/chat/dismiss", chat_dismiss, methods=["POST"]),
             Route("/api/activity", activity),
             Route("/api/events", events_list),
             Route("/api/events/{id:int}/add", event_add, methods=["POST"]),

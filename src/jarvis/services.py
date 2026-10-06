@@ -356,7 +356,39 @@ class Services:
             except asyncio.TimeoutError:
                 pass
 
+    def announce_version(self) -> bool:
+        """After an update, a chat card with what's new in it (every version since the last one announced)."""
+        from pathlib import Path
+        from . import __version__
+        last = self.db.get("app.version_announced")
+        if last == __version__:
+            return False
+        try:
+            text = (Path(__file__).resolve().parent / "CHANGELOG.md").read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        sections = re.split(r"(?m)^## ", text)[1:]
+        news = []
+        for section in sections:
+            heading, _, body = section.partition("\n")
+            version = heading.split()[0] if heading.split() else ""
+            if last and version == last:
+                break
+            news.append((version, body.strip()))
+            if not last:
+                break        # first time: just this version's notes
+        bullets = "\n".join(b for _, b in news[:5] if b)
+        card = f"✨ **Jarvis updated to v{__version__}**\n{bullets}\n\n[All changes](#whatsnew)".strip()
+        self.db.execute("INSERT INTO chat_messages (ts, role, content, trace) VALUES (?, 'activity', ?, '')",
+                        (time.time(), card))
+        self.db.set("app.version_announced", __version__)
+        return True
+
     def start(self) -> None:
+        try:
+            self.announce_version()
+        except Exception as error:  # noqa: BLE001 — never stops Jarvis starting
+            diag.warning("app", f"couldn't post the update note: {error}")
         for index, job in enumerate(self.jobs.values()):
             self._tasks.append(asyncio.create_task(self._loop(job, 3 + index * 2), name=f"job:{job.name}"))
 
