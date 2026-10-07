@@ -253,7 +253,12 @@ def search_request(text: str) -> str | None:
 def looks_unsure(answer: str) -> bool:
     """Script check: did the model say it doesn't know / can't check? (only the opening and closing count)"""
     text = answer.strip()
-    return bool(text) and bool(UNSURE.search(text[:400]) or UNSURE.search(text[-300:]))
+    if not text:
+        return False
+    if UNSURE.search(text[:min(400, max(150, len(text) // 2))]):     # how it starts
+        return True
+    # a closing caveat ("…the source data doesn't mention X") doesn't undo a real answer, only a short one
+    return len(text) < 350 and bool(UNSURE.search(text[-300:]))
 
 
 def is_personal(prompt: str) -> bool:

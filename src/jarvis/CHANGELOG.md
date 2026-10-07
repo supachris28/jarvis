@@ -1,5 +1,9 @@
 # What's new in Jarvis
 
+## 0.20.4 — 7 October 2026
+- Fixed: a good answer from your email was replaced mid-stream by “couldn't find anything” — a closing remark like “the emails don't mention…” no longer counts as Jarvis not knowing.
+- Email answers stick to emails that are about what you asked (the words in the subject), not ones that just mention “group” somewhere, and use the most recent one unless you ask about older ones.
+
 ## 0.20.3 — 7 October 2026
 - **No more made-up emails.** When an email search finds nothing, Jarvis says so (and what it searched for) instead of letting the model invent one. Answers about email must come from the emails found.
 - **The newest matches are read in full**, not just their subject lines, so “what are the life group notices?” gets the actual notices.

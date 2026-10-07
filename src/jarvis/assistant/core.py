@@ -1138,13 +1138,30 @@ class Assistant:
         if not threads:
             _EMAIL_TRIED.set(tried)
             return "", []
-        newest_only = bool(RECENT_EMAIL.search(prompt or ""))
+        # Gmail matches the words anywhere (an O2 email that mentions a "group"): when some are plainly about it —
+        # the words in the subject — keep only the ones that are
+        words = [w for w in re.findall(r"[\w'-]+", re.sub(r'from:(?:"[^"]+"|\S+)', "", tried[-1]).casefold())
+                 if w not in STOPWORDS]
+        phrase = " ".join(words)
+
+        def relevance(thread: dict) -> int:
+            subject, snippet = (thread.get("subject") or "").casefold(), (thread.get("snippet") or "").casefold()
+            if phrase and phrase in subject:
+                return 3
+            if words and all(w in subject for w in words):
+                return 2
+            return 1 if phrase and phrase in snippet else 0
+        on_topic = [t for t in threads if relevance(t) >= 1]
+        if words and any(relevance(t) >= 2 for t in threads):
+            threads = on_topic
+        newest_only = bool(RECENT_EMAIL.search(prompt or "")) or bool(words and relevance(threads[0]) >= 2)
         for thread in threads[:1 if newest_only else 3]:      # the newest ones, read in full
             thread["body"] = await self._thread_body(thread["id"])
-        if newest_only:
-            threads[0]["most_recent"] = True
+        threads[0]["most_recent"] = True
         sources = [{"label": f"{t['from']} — {t['subject']}", "url": app_email_url(t["id"])} for t in threads]
-        note = f"Searched Gmail for: {tried[-1]}\n" + ("" if tried[-1] == query else f"(asked for: {query})\n")
+        note = (f"Searched Gmail for: {tried[-1]}\n" + ("" if tried[-1] == query else f"(asked for: {query})\n")
+                + "Newest first. Unless older ones are asked about, answer from the most recent one (its full text "
+                  "is under \"body\").\n")
         return note + json.dumps(threads, ensure_ascii=False, indent=1), sources
 
     async def _thread_body(self, thread_id: str, limit: int = 3000) -> str:

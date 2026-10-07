@@ -155,3 +155,34 @@ class ReportTwoTests(IntegrationBase):
         text = "".join(e.get("text", "") for e in events if e["type"] == "token")
         self.assertTrue(text.startswith("I couldn't find an email matching that."), text)
         self.assertIn("“pottery club”", text)
+
+
+class ReportThreeTests(ReportTwoTests):
+    """jarvis-report-3: the right notices were streaming, then swapped for 'couldn't find anything'."""
+
+    def test_closing_caveat_doesnt_undo_an_answer(self):
+        from jarvis.assistant.planner import looks_unsure
+        answer = ("It appears that the life group notices are sent by Lucy Kitchin, and the current notices include:\n\n"
+                  "1. Gospel Night - This Sunday, with Andy Farrer preaching.\n2. Pastoral Volunteers - an evening to "
+                  "gather and connect.\n3. Pursuit - a day of worship, teaching and prayer.\n4. Prayer & Fasting - next "
+                  "week, Mon 28th to Wed 30th Sept, for Life Groups.\n\nThe source data doesn't mention any other "
+                  "notices this week.")
+        self.assertFalse(looks_unsure(answer))
+        self.assertTrue(looks_unsure("I'm not sure what the life group notices are."))
+        self.assertTrue(looks_unsure("Sorry. The source data doesn't mention life group notices."))
+
+    def test_off_topic_matches_dropped(self):
+        async def search_threads(query, limit=15):
+            return [{"id": "tm1", "subject": "Life Group Notices", "from": "Lucy Kitchin", "date": "", "messages": 1,
+                     "snippet": "Gospel night"},
+                    {"id": "o2", "subject": "O2: Things you need to know", "from": "O2", "date": "", "messages": 1,
+                     "snippet": "your group plan notices"},
+                    {"id": "tm2", "subject": "Life Group Notices", "from": "Lucy Kitchin", "date": "", "messages": 1,
+                     "snippet": "Older"}]
+        self.services.assistant.gmail.search_threads = search_threads
+        context, sources = self.run_async(self.services.assistant.gather_gmail("life group notices",
+                                                                               "What are the life group notices?"))
+        self.assertEqual([s["label"] for s in sources], ["Lucy Kitchin — Life Group Notices"] * 2)
+        self.assertNotIn("O2", context)
+        self.assertIn('"most_recent": true', context)
+        self.assertIn("Prayer and fasting week from Monday 12th.", context, "the newest is read in full")
