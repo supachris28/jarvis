@@ -87,3 +87,71 @@ class EmailRouteTests(IntegrationBase):
             trace = s.db.one("SELECT trace FROM logs WHERE source = 'feedback' ORDER BY id DESC LIMIT 1")["trace"]
             exported = client.get("/api/diag/export", params={"trace": trace}).json()
             self.assertEqual(exported["reports"][0]["id"], saved["id"])
+
+
+class ReportTwoTests(IntegrationBase):
+    """jarvis-report-2: three ways of asking for Lucy Kitchin's life group notices."""
+
+    def setUp(self):
+        super().setUp()
+        s = self.services
+        import json as _json
+        import time as _time
+        for n, (mid, subject, body) in enumerate((("m1", "Life Group Notices", "Prayer and fasting week from Monday 12th."),
+                                                  ("m2", "Life Group Notices", "Old notices from September."))):
+            s.db.execute("INSERT INTO emails (message_id, thread_id, ts, from_addr, from_name, to_addrs, subject, labels, "
+                         "bulk, outgoing, snippet, body, attachments) VALUES (?, ?, ?, 'kings@mg.churchsuite.com', "
+                         "'Lucy Kitchin', ?, ?, '[]', 1, 0, '', ?, '[]')",
+                         (mid, f"t{mid}", _time.time() - 86400 * (1 + n * 20), _json.dumps([["me@example.com", "Chris"]]),
+                          subject, body))
+        self.searched = []
+
+        async def search_threads(query, limit=15):
+            self.searched.append(query)
+            lowered = query.casefold()
+            if "from:" in lowered and 'from:"lucy kitchin"' not in lowered:
+                return []
+            if "life group" not in lowered:
+                return []
+            return [{"id": "tm1", "subject": "Life Group Notices", "from": "Lucy Kitchin <kings@mg.churchsuite.com>",
+                     "date": "", "messages": 1, "snippet": "Prayer and fasting"},
+                    {"id": "tm2", "subject": "Life Group Notices", "from": "Lucy Kitchin <kings@mg.churchsuite.com>",
+                     "date": "", "messages": 1, "snippet": "Old"}]
+        s.assistant.gmail.search_threads = search_threads
+
+    def ask(self, text):
+        async def go():
+            return [e async for e in self.services.assistant.handle(text)]
+        return self.run_async(go())
+
+    def test_question_about_an_email_subject_goes_to_email(self):
+        events = self.ask("What are the life group notices?")
+        meta = next(e for e in events if e["type"] == "meta")
+        self.assertEqual((meta["route"], meta["query"]), ("gmail", "life group notices"))
+
+    def test_misspelt_sender_and_topic(self):
+        for prompt in ("Look for the most recent email from lucy kitchen about life group notices",
+                       "Look for the most recent email from.lich kitchen about life group notices"):
+            self.searched.clear()
+            events = self.ask(prompt)
+            meta = next(e for e in events if e["type"] == "meta")
+            self.assertEqual(meta["route"], "gmail", prompt)
+            self.assertEqual(self.searched[0], 'from:"Lucy Kitchin" life group notices', prompt)
+            sources = next(e for e in events if e["type"] == "sources")["items"]
+            self.assertTrue(sources and "Life Group Notices" in sources[0]["label"], prompt)
+
+    def test_the_newest_email_is_read_in_full(self):
+        context, _ = self.run_async(self.services.assistant.gather_gmail(
+            'from:"lucy kitchen" life group notices', "the most recent email from lucy kitchen about life group notices"))
+        self.assertIn("Prayer and fasting week from Monday 12th.", context)
+        self.assertIn('"most_recent": true', context)
+
+    def test_nothing_found_is_said_plainly(self):
+        async def nothing(query, limit=15):
+            self.searched.append(query)
+            return []
+        self.services.assistant.gmail.search_threads = nothing
+        events = self.ask("Look for the most recent email from Zed Quux about the pottery club")
+        text = "".join(e.get("text", "") for e in events if e["type"] == "token")
+        self.assertTrue(text.startswith("I couldn't find an email matching that."), text)
+        self.assertIn("“pottery club”", text)

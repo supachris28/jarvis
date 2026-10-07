@@ -123,29 +123,51 @@ EMAIL_FOLLOW_UP = re.compile(
     r"(?:\s+(?:for\s+)?(?:it|that|this|them|those|instead|too|then|as well|please))*\s*[?.!]*\s*$", re.IGNORECASE)
 
 
+EMAIL_FROM = re.compile(
+    r"\b(?:look|search|find|check|get|show|open|read|what(?:'s| is| was| did)?|any)\b.{0,40}?\be-?mails?\b\s+"
+    r"(?:from|by|sent by)\s+(?P<q>.+)", re.IGNORECASE | re.DOTALL)
+RECENT_EMAIL = re.compile(r"\b(?:most recent|latest|last|newest|recent)\b", re.IGNORECASE)
+
+
+def _tidy(text: str) -> str:
+    text = re.sub(r"[?.!]+\s*$", "", text).strip()
+    text = re.sub(r"\s+(?:please|thanks|thank you)$", "", text, flags=re.I)
+    return re.sub(r"^(?:any|all|some|the|my|our|please)\s+", "", text, flags=re.I).strip()
+
+
+def email_query(who: str = "", topic: str = "") -> str:
+    who, topic = _tidy(who), _tidy(topic)
+    sender = (f'from:"{who}"' if " " in who else f"from:{who}") if who else ""
+    return " ".join(x for x in (sender, topic) if x)
+
+
 def explicit_email(prompt: str) -> str | None:
-    """'Look in my email for life group notices', 'any emails from Sam?' → a Gmail search, without asking the model
-    (which sometimes just chats instead)."""
+    """'Look in my email for life group notices', 'the latest email from Lucy about life group' → a Gmail search,
+    without asking the model (which sometimes just chats instead)."""
     if EMAIL_FOLLOW_UP.match(prompt):
         return ""             # "search my email (for it)": about the question before
-    match = EMAIL_LOOK.search(prompt) or EMAIL_ABOUT.search(prompt)
+    prompt = re.sub(r"\b(from|about|for)\.(?=\w)", r"\1 ", prompt, flags=re.I)    # "from.lucy" (a phone typo)
+    match = EMAIL_FROM.search(prompt)
+    how = "from" if match else ""
     if not match:
-        return None
-    query = re.sub(r"[?.!]+\s*$", "", match.group("q")).strip()
+        match = EMAIL_LOOK.search(prompt) or EMAIL_ABOUT.search(prompt)
+        if not match:
+            return None
+        how = match.group("how").casefold()
+    query = _tidy(match.group("q"))
     if re.fullmatch(r"(?:it|that|this|them|those)", query, re.I):
         return ""
-    query = re.sub(r"^(?:any|all|some|the|please)\s+", "", query, flags=re.I)
-    query = re.sub(r"\s+(?:please|thanks|thank you)$", "", query, flags=re.I).strip()
-    how = match.group("how").casefold()
-    lead = re.match(r"(?:anything|something|stuff|e-?mails?|messages?)\s+(from|about|re|regarding)\s+(.+)", query, re.I)
-    if lead:                       # "for anything from the council"
+    lead = re.match(r"(?:anything|something|stuff|e-?mails?|messages?|the\s+\w+\s+e-?mail)\s+"
+                    r"(from|about|re|regarding)\s+(.+)", query, re.I)
+    if lead:                       # "for anything from the council", "for the latest email from Lucy"
         how, query = lead.group(1).casefold(), lead.group(2)
-    query = re.sub(r"^(?:the|my|our)\s+", "", query, flags=re.I).strip()
     if not query:
         return None
-    if how == "from":
-        return f'from:"{query}"' if " " in query else f"from:{query}"
-    return query
+    if how == "from":              # "Lucy Kitchin about life group notices" → sender + topic
+        parts = re.split(r"\s+(?:about|re|regarding|on the subject of|for)\s+", query, maxsplit=1, flags=re.I)
+        who, topic = parts[0], parts[1] if len(parts) > 1 else ""
+        return email_query(who, topic) or None
+    return _tidy(query) or None
 
 
 def gmail_fallbacks(query: str) -> list[str]:

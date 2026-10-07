@@ -1,5 +1,11 @@
 # What's new in Jarvis
 
+## 0.20.3 — 7 October 2026
+- **No more made-up emails.** When an email search finds nothing, Jarvis says so (and what it searched for) instead of letting the model invent one. Answers about email must come from the emails found.
+- **The newest matches are read in full**, not just their subject lines, so “what are the life group notices?” gets the actual notices.
+- **Sender and topic understood**: “the most recent email from Lucy Kitchen about life group notices” searches for that sender *and* that topic. Misspelt or misheard names (“lucy kitchen”, “lich kitchen”) are matched to people you actually get email from.
+- **Questions about things in your recent emails go to email.** “What are the life group notices?” matches the emails called *Life Group Notices*, instead of a guess.
+
 ## 0.20.2 — 7 October 2026
 - **Email searches.** Asking Jarvis to look, search or check in your email (or “any emails about/from …”) always searches email now, instead of sometimes just chatting. If the exact words find nothing, it tries again without words like *notices* or *this week*.
 - **“Search my email”** on its own (or “check my emails for that”) searches for the question you asked just before.
