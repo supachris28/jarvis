@@ -105,6 +105,65 @@ def parse_plan(raw: str) -> Plan | None:
     return Plan(route, query.strip())
 
 
+EMAIL_LOOK = re.compile(
+    r"\b(?:look|search|check|scan|go\s+through|find|dig|have\s+a\s+look|hunt)\b(?:\s+\w+){0,3}?\s+(?:in|through|on|at)?\s*"
+    r"(?:my|the|our)?\s*(?:e-?mails?|inbox|gmail|mail)\b\s*(?P<how>for|about|re|regarding|from|to\s+find)\s+(?P<q>.+)",
+    re.IGNORECASE | re.DOTALL)
+EMAIL_ABOUT = re.compile(
+    r"\b(?:any|find|show|list|get|what|which|latest|recent|last)\b(?:\s+\w+){0,2}?\s+e-?mails?\s+"
+    r"(?P<how>about|from|re|regarding|on|mentioning)\s+(?P<q>.+)", re.IGNORECASE | re.DOTALL)
+GENERIC_EMAIL_WORDS = frozenset("""notice notices email emails message messages update updates info information details
+detail anything stuff news things thing latest recent mail mails letter letters week weekend today tomorrow
+tonight month next""".split())
+
+
+EMAIL_FOLLOW_UP = re.compile(
+    r"^\s*(?:(?:can|could|will) you\s+|please\s+|ok\s+|no[,.]?\s+|then\s+)*(?:look|search|check|try|have a look)"
+    r"(?:\s+(?:in|through|at))?\s+(?:my\s+|the\s+)?(?:e-?mails?|inbox|gmail|mail)"
+    r"(?:\s+(?:for\s+)?(?:it|that|this|them|those|instead|too|then|as well|please))*\s*[?.!]*\s*$", re.IGNORECASE)
+
+
+def explicit_email(prompt: str) -> str | None:
+    """'Look in my email for life group notices', 'any emails from Sam?' → a Gmail search, without asking the model
+    (which sometimes just chats instead)."""
+    if EMAIL_FOLLOW_UP.match(prompt):
+        return ""             # "search my email (for it)": about the question before
+    match = EMAIL_LOOK.search(prompt) or EMAIL_ABOUT.search(prompt)
+    if not match:
+        return None
+    query = re.sub(r"[?.!]+\s*$", "", match.group("q")).strip()
+    if re.fullmatch(r"(?:it|that|this|them|those)", query, re.I):
+        return ""
+    query = re.sub(r"^(?:any|all|some|the|please)\s+", "", query, flags=re.I)
+    query = re.sub(r"\s+(?:please|thanks|thank you)$", "", query, flags=re.I).strip()
+    how = match.group("how").casefold()
+    lead = re.match(r"(?:anything|something|stuff|e-?mails?|messages?)\s+(from|about|re|regarding)\s+(.+)", query, re.I)
+    if lead:                       # "for anything from the council"
+        how, query = lead.group(1).casefold(), lead.group(2)
+    query = re.sub(r"^(?:the|my|our)\s+", "", query, flags=re.I).strip()
+    if not query:
+        return None
+    if how == "from":
+        return f'from:"{query}"' if " " in query else f"from:{query}"
+    return query
+
+
+def gmail_fallbacks(query: str) -> list[str]:
+    """Looser searches when the exact one finds nothing: 'life group notices' → 'life group' (Gmail doesn't match
+    plurals or words that only describe the email)."""
+    if ":" in query:
+        return []
+    words = query.split()
+    out = []
+    core = [w for w in words if w.casefold().strip("'\"") not in GENERIC_EMAIL_WORDS]
+    if core and core != words:
+        out.append(" ".join(core))
+    singular = [re.sub(r"(?<=[a-z]{3})s$", "", w) for w in (core or words)]
+    if singular != (core or words):
+        out.append(" ".join(singular))
+    return out
+
+
 WEB_EXPLICIT = re.compile(
     r"^\s*(?:please\s+|can you\s+|could you\s+)?(?:search(?:\s+(?:the\s+)?(?:web|internet|online))?(?:\s+for)?|"
     r"look\s+up|google|find\s+(?:out|online)|check\s+online(?:\s+for)?)\s+(.+?)\s*\??$",

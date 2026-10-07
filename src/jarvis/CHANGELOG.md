@@ -1,5 +1,10 @@
 # What's new in Jarvis
 
+## 0.20.2 — 7 October 2026
+- **Email searches.** Asking Jarvis to look, search or check in your email (or “any emails about/from …”) always searches email now, instead of sometimes just chatting. If the exact words find nothing, it tries again without words like *notices* or *this week*.
+- **“Search my email”** on its own (or “check my emails for that”) searches for the question you asked just before.
+- **Better 👎 reports.** After reporting an answer, *⬇ Report file* downloads everything needed to fix it: the question, the answer, your note, what Jarvis did, and the messages before it with what Jarvis did for those. Each report in Logs → Reports has *⬇ Download* too, and exporting the 👎 line's own trace now brings the report with it.
+
 ## 0.20.1 — 7 October 2026
 - **Events in two calendars count once.** Something in both your main and the family calendar (the same invite, or the same title at the same time) appears once in Plan, the brief, the evening preview, the weekly review, answers about your calendar, reminders and the journal. Your main calendar's copy is the one used; if it's deleted, the family copy shows again.
 

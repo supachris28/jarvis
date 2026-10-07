@@ -1804,8 +1804,14 @@ function addReportButton(el, trace, answer, route = "") {
       const prompt = asked ? asked.dataset.text || "" : "";
       const r = await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace, answer, route, note, prompt }) });
       if (!r.ok) { form.insertAdjacentHTML("beforeend", '<p class="error small">Couldn\'t save the report.</p>'); return; }
+      const saved = await r.json();
       form.remove();
       button.textContent = "👎 Reported"; button.disabled = true;
+      const get = document.createElement("button");
+      get.type = "button"; get.className = "speak"; get.textContent = "⬇ Report file";
+      get.title = "Download this report (question, answer, your note, what Jarvis did and the messages before) to share";
+      get.addEventListener("click", () => download(saved.download));
+      button.after(get);
     });
     el.appendChild(form);
     form.querySelector("textarea").focus();
@@ -1820,6 +1826,7 @@ function reportHtml(f) {
     ${f.note ? `<p>📝 ${esc(f.note)}</p>` : ""}
     <details><summary class="small">Answer given</summary><div class="small">${markdown(f.answer)}</div></details>
     <div class="row-actions">
+      <button class="ghost" data-download="${f.id}" title="Question, answer, your note, what Jarvis did and the messages before">⬇ Download</button>
       ${f.trace ? `<a class="button ghost" href="#logs?trace=${esc(f.trace)}">Logs (${f.log_count})</a>` : ""}
       ${f.status === "open" ? '<button class="ghost" data-status="fixed">Fixed</button><button class="ghost" data-status="dismissed">Dismiss</button>'
                             : '<button class="ghost" data-status="open">Reopen</button>'}
@@ -1834,6 +1841,8 @@ async function loadReports() {
   $("#log-more").classList.add("hidden");
 }
 $("#log-list").addEventListener("click", async (event) => {
+  const get = event.target.closest("[data-download]");
+  if (get) { download(`/api/feedback/${get.dataset.download}/export`); return; }
   const button = event.target.closest("[data-status]");
   const card = event.target.closest("[data-report]");
   if (!button || !card) return;

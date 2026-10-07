@@ -291,6 +291,7 @@ class Database:
                                          "target_event_id": "TEXT NOT NULL DEFAULT ''"},  # note: event to update
                      "event_scan": {"automated": "INTEGER NOT NULL DEFAULT 0"},
                      "scheduled": {"decided": "REAL"},
+                     "feedback": {"context": "TEXT NOT NULL DEFAULT '[]'"},   # the turns before, with their logs
                      "deliveries": {"item_checked": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "REAL",
                                     "collect_place": "TEXT NOT NULL DEFAULT ''", "collect_code": "TEXT NOT NULL DEFAULT ''",
                                     "collect_by": "TEXT NOT NULL DEFAULT ''"}}

@@ -762,8 +762,18 @@ async def diag_export(request: Request) -> Response:
         hours = min(int(q.get("hours", "24") or 24), 24 * 14)
         rows = services.db.all("SELECT * FROM logs WHERE ts > ? ORDER BY id", (time.time() - hours * 3600,))
         name = f"jarvis-logs-{time.strftime('%Y%m%d-%H%M')}.json"
-    body = json.dumps({"version": __version__, "exported": time.time(), "logs": [_log_row(r) for r in rows]},
-                      ensure_ascii=False, indent=1, default=str)
+    export = {"version": __version__, "exported": time.time(), "logs": [_log_row(r) for r in rows]}
+    if q.get("trace"):
+        # the 👎 log line's own trace says little: bring the report (question, answer, what Jarvis did) with it
+        ids = {r["id"] for r in services.db.all("SELECT id FROM feedback WHERE trace = ?", (q["trace"],))}
+        for log in export["logs"]:
+            if log.get("source") == "feedback" and isinstance(log.get("data"), dict) and log["data"].get("report"):
+                ids.add(int(log["data"]["report"]))
+        if ids:
+            marks = ",".join("?" * len(ids))
+            export["reports"] = [_report_item(dict(r), True) for r in services.db.all(
+                f"SELECT * FROM feedback WHERE id IN ({marks}) ORDER BY id", tuple(ids))]
+    body = json.dumps(export, ensure_ascii=False, indent=1, default=str)
     return Response(body, media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -792,27 +802,66 @@ async def feedback_add(request: Request) -> Response:
         return JSONResponse({"error": "nothing to report"}, status_code=400)
     logs = [_log_row(r) for r in services.db.all("SELECT * FROM logs WHERE trace = ? ORDER BY id LIMIT 400", (trace,))] \
         if trace else []
+    context = _report_context(services, trace, prompt)
     cursor = services.db.execute(
-        "INSERT INTO feedback (ts, trace, prompt, answer, route, note, version, logs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO feedback (ts, trace, prompt, answer, route, note, version, logs, context) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (time.time(), trace, prompt[:4000], answer, str(body.get("route", ""))[:40], str(body.get("note", ""))[:2000],
-         __version__, json.dumps(logs, ensure_ascii=False, default=str)))
-    diag.event("feedback", f"answer reported as wrong: {prompt[:80] or answer[:80]}", note=str(body.get("note", ""))[:200])
-    return JSONResponse({"id": cursor.lastrowid})
+         __version__, json.dumps(logs, ensure_ascii=False, default=str),
+         json.dumps(context, ensure_ascii=False, default=str)))
+    diag.event("feedback", f"answer reported as wrong: {prompt[:80] or answer[:80]}", note=str(body.get("note", ""))[:200],
+               report=cursor.lastrowid, reported_trace=trace)
+    return JSONResponse({"id": cursor.lastrowid, "download": f"/api/feedback/{cursor.lastrowid}/export"})
+
+
+def _report_context(services: Services, trace: str, prompt: str, turns: int = 3) -> list[dict]:
+    """The conversation just before a reported answer, each message with what Jarvis did for it — a wrong answer
+    is often about a question asked a moment earlier."""
+    anchor = services.db.one("SELECT id FROM chat_messages WHERE trace = ? AND trace != '' ORDER BY id LIMIT 1", (trace,)) \
+        if trace else None
+    if anchor is None and prompt:
+        anchor = services.db.one("SELECT id FROM chat_messages WHERE role = 'user' AND content = ? ORDER BY id DESC "
+                                 "LIMIT 1", (prompt,))
+    before = anchor["id"] if anchor else 1 << 62
+    rows = services.db.all("SELECT id, ts, role, content, trace FROM chat_messages WHERE id < ? AND role IN "
+                           "('user', 'assistant') ORDER BY id DESC LIMIT ?", (before, turns * 2))
+    out, logged = [], set()
+    for row in reversed(rows):
+        item = {"role": row["role"], "content": row["content"][:4000], "trace": row["trace"], "ts": row["ts"]}
+        if row["trace"] and row["trace"] not in logged:
+            logged.add(row["trace"])
+            item["logs"] = [_log_row(r) for r in services.db.all(
+                "SELECT * FROM logs WHERE trace = ? ORDER BY id LIMIT 200", (row["trace"],))]
+        out.append(item)
+    return out
+
+
+async def feedback_one_export(request: Request) -> Response:
+    """One report as a file to share: the question, the answer, your note, what Jarvis did, and the turns before."""
+    services: Services = request.app.state.services
+    row = services.db.one("SELECT * FROM feedback WHERE id = ?", (request.path_params["id"],))
+    if row is None:
+        return JSONResponse({"error": "No such report."}, status_code=404)
+    body = json.dumps({"version": __version__, "exported": time.time(), "reports": [_report_item(dict(row), True)]},
+                      ensure_ascii=False, indent=1, default=str)
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="jarvis-report-{row["id"]}.json"'})
 
 
 def _feedback_rows(services: Services, status: str = "", with_logs: bool = False) -> list[dict]:
     rows = services.db.all("SELECT * FROM feedback" + (" WHERE status = ?" if status else "") + " ORDER BY id DESC "
                            "LIMIT 200", (status,) if status else ())
-    items = []
-    for row in rows:
-        item = dict(row)
-        logs = json.loads(item.pop("logs") or "[]")
-        if with_logs:
-            item["logs"] = logs
-        else:
-            item["log_count"] = len(logs)
-        items.append(item)
-    return items
+    return [_report_item(dict(row), with_logs) for row in rows]
+
+
+def _report_item(item: dict, with_logs: bool) -> dict:
+    logs = json.loads(item.pop("logs", "") or "[]")
+    context = json.loads(item.pop("context", "") or "[]")
+    if with_logs:
+        item["logs"], item["before"] = logs, context
+    else:
+        item["log_count"], item["before_count"] = len(logs), len(context)
+    return item
 
 
 async def feedback_list(request: Request) -> Response:
@@ -1091,6 +1140,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
             Route("/api/feedback", feedback_add, methods=["POST"]),
             Route("/api/feedback", feedback_list),
             Route("/api/feedback/export", feedback_export),
+            Route("/api/feedback/{id:int}/export", feedback_one_export),
             Route("/api/feedback/{id:int}", feedback_update, methods=["POST"]),
             Route("/api/vault/revert/{id:int}", vault_revert, methods=["POST"]),
             Route("/auth/google/start", google_start),
