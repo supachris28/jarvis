@@ -119,7 +119,7 @@ class People:
                 bump(addresses[row["from_addr"]], row["ts"])
         tz = self.settings.tz
         now = datetime.now(tz)
-        for row in self.db.all("SELECT attendees, start FROM events WHERE status != 'cancelled' AND start >= ? "
+        for row in self.db.all("SELECT attendees, start FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start >= ? "
                                "AND start <= ?", ((now.date() - timedelta(days=days)).isoformat(),
                                                   now.strftime("%Y-%m-%dT%H:%M:%S"))):
             try:   # only events that have happened: a weekly meeting next Tuesday isn't being in touch today
@@ -255,7 +255,7 @@ class People:
         if addresses:
             marks = ",".join("?" * len(addresses))
             upcoming = [{"summary": r["summary"], "start": r["start"]} for r in self.db.all(
-                f"SELECT summary, start FROM events WHERE status != 'cancelled' AND start >= ? AND EXISTS (SELECT 1 FROM "
+                f"SELECT summary, start FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start >= ? AND EXISTS (SELECT 1 FROM "
                 f"json_each(attendees) j WHERE json_extract(j.value, '$.email') IN ({marks})) ORDER BY start LIMIT 5",
                 [datetime.now(tz).date().isoformat()] + addresses)]
         first = item["name"].split()[0].casefold()
@@ -461,7 +461,7 @@ class People:
         tz = self.settings.tz
         now = datetime.now(tz)
         addresses = {r["email"]: r["path"] for r in self.db.all("SELECT email, path FROM people")}
-        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND all_day = 0 AND start >= ? AND start < ?",
+        rows = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND all_day = 0 AND start >= ? AND start < ?",
                            (now.isoformat()[:16], (now + timedelta(minutes=lead_minutes)).isoformat()[:16]))
         index = await self.assistant.people_index() if self.assistant is not None else []
         sent = 0
@@ -540,7 +540,7 @@ async def upcoming_meetings(people: People, days: int = 7) -> list[dict]:
     now = datetime.now(tz)
     first, after = now.date(), now.date() + timedelta(days=days)
     rows = [dict(r) for r in people.db.all(
-        "SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? ORDER BY start",
+        "SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start < ? AND end >= ? ORDER BY start",
         ((after + timedelta(days=1)).isoformat(), (first - timedelta(days=1)).isoformat()))]
     events = [e for e in events_between(rows, first, after, tz) if e["local_end"] > now]
     addresses = {r["email"]: r["path"] for r in people.db.all("SELECT email, path FROM people")}

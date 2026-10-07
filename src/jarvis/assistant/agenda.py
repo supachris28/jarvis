@@ -85,8 +85,68 @@ def _span(event: dict, tz: tzinfo) -> tuple[datetime, datetime, bool]:
     return start, max(end, start), all_day
 
 
+def _instant(value: str):
+    """A start/end comparable whether it came from Google (UTC, 'Z', the calendar's zone) or the stored local copy."""
+    value = value or ""
+    if len(value) <= 10:
+        return value
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return moment.timestamp() if moment.tzinfo else moment.isoformat()
+
+
+def event_keys(event: dict) -> list[tuple]:
+    """What makes two calendar entries the same event: the same title at the same time, or the same invite (iCal UID)
+    at the same time — so a meeting in both your main and the family calendar is one meeting."""
+    title = re.sub(r"[^\w]+", " ", (event.get("summary") or "").casefold()).strip()
+    start, end = _instant(event.get("start", "")), _instant(event.get("end", ""))
+    keys = [("time", title, start, end)] if title else []
+    if event.get("ical_uid"):
+        keys.append(("uid", event["ical_uid"], start))     # a recurring invite: one UID, many starts
+    return keys
+
+
+def duplicate_groups(events: list[dict], order: dict[str, int] | None = None) -> list[list[dict]]:
+    """Entries grouped by event, best copy first: the calendar listed first (your main one), then the fullest."""
+    order = order or {}
+    parent = list(range(len(events)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    seen: dict[tuple, int] = {}
+    for i, event in enumerate(events):
+        for key in event_keys(event):
+            if key in seen:
+                parent[find(i)] = find(seen[key])
+            else:
+                seen[key] = i
+    groups: dict[int, list[int]] = {}
+    for i in range(len(events)):
+        groups.setdefault(find(i), []).append(i)
+
+    def rank(i: int):
+        e = events[i]
+        attendees = e.get("attendees") or []
+        return (e.get("calendar_id") not in order, order.get(e.get("calendar_id"), 99),
+                -len(attendees if isinstance(attendees, list) else str(attendees)), -len(e.get("description") or ""), i)
+    return [[events[i] for i in sorted(members, key=rank)] for members in groups.values()]
+
+
+def unique_events(events: list[dict], order: dict[str, int] | None = None) -> list[dict]:
+    """Each event once (copies in other calendars dropped), in the order given."""
+    events = [e for e in events if not e.get("duplicate_of")]
+    keep = {id(group[0]) for group in duplicate_groups(events, order)}
+    return [e for e in events if id(e) in keep]
+
+
 def events_between(events: list[dict], first: date, after_last: date, tz: tzinfo) -> list[dict]:
     """Events that overlap the local days [first, after_last), each with local times added, in order."""
+    events = unique_events(events)
     window_start = datetime.combine(first, time(0), tz)
     window_end = datetime.combine(after_last, time(0), tz)
     found: dict[str, dict] = {}

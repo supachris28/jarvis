@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS event_proposals (
     thread_id TEXT NOT NULL DEFAULT '',
     email_subject TEXT NOT NULL DEFAULT '',
     ical_uid TEXT NOT NULL DEFAULT '',
+    duplicate_of TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL,
     start TEXT NOT NULL,               -- ISO datetime with offset, or YYYY-MM-DD for all-day
     end TEXT NOT NULL,
@@ -280,7 +281,8 @@ class Database:
 
     def _migrate(self) -> None:
         """Add columns introduced after the first release."""
-        additions = {"events": {"ical_uid": "TEXT NOT NULL DEFAULT ''"},
+        additions = {"events": {"ical_uid": "TEXT NOT NULL DEFAULT ''",
+                                "duplicate_of": "TEXT NOT NULL DEFAULT ''"},   # the same event in another calendar
                      "chat_messages": {"trace": "TEXT NOT NULL DEFAULT ''"},
                      "event_proposals": {"sender": "TEXT NOT NULL DEFAULT ''",
                                          "calendar_id": "TEXT NOT NULL DEFAULT ''",

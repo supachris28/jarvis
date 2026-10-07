@@ -1149,7 +1149,7 @@ class Assistant:
         events: list[dict] = []
         inside = first >= (now - timedelta(days=1)).date() and after_last <= (now + timedelta(days=55)).date()
         if synced and inside:
-            rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? "
+            rows = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start < ? AND end >= ? "
                                "ORDER BY start", ((after_last + timedelta(days=1)).isoformat(),
                                                   (first - timedelta(days=1)).isoformat()))
             events = [dict(r) for r in rows]
@@ -1231,7 +1231,7 @@ class Assistant:
         events: dict[str, dict] = {}
         # the next three weeks come from the events the calendar job already keeps (no API call); Google is only
         # asked for a search across the wider range
-        local = self.db.all("SELECT * FROM events WHERE start >= ? AND start < ? ORDER BY start LIMIT 300",
+        local = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND start >= ? AND start < ? ORDER BY start LIMIT 300",
                             ((now - timedelta(days=1)).date().isoformat(), (now + timedelta(days=21)).date().isoformat()))
         synced = self.db.get("calendar.last_run") or self.db.one("SELECT 1 FROM events LIMIT 1")
         for row in local:
@@ -1269,7 +1269,9 @@ class Assistant:
                 return f"{datetime.fromisoformat(value):%a %d %b %Y} (all day)" if len(value) == 10 else local(value)
             except ValueError:
                 return value
-        ordered = sorted((e for e in events.values() if e["status"] != "cancelled"),
+        from .agenda import unique_events
+        order = {c: i for i, c in enumerate(self.settings.google_calendar_ids)}
+        ordered = sorted((e for e in unique_events(list(events.values()), order) if e["status"] != "cancelled"),
                          key=lambda e: parse_iso(e["start"], tz) if e["start"] else now)[:80]
         slim = [{"summary": e["summary"], "start": day(e["start"]), "end": local(e["end"]) if len(e["end"]) != 10
                  else "", "location": e["location"]} |

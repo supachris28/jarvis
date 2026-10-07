@@ -1,5 +1,8 @@
 # What's new in Jarvis
 
+## 0.20.1 — 7 October 2026
+- **Events in two calendars count once.** Something in both your main and the family calendar (the same invite, or the same title at the same time) appears once in Plan, the brief, the evening preview, the weekly review, answers about your calendar, reminders and the journal. Your main calendar's copy is the one used; if it's deleted, the family copy shows again.
+
 ## 0.20.0 — 6 October 2026
 - **Swipe a chat card left to dismiss it** (with a mouse, the ✕ in its corner). *Undo* for a few seconds; after that it's gone from the chat on every device.
 - **Updates are posted in the chat**: a card with what's new in the version, saved with the chat so you see it on every device (and can swipe it away).

@@ -204,11 +204,11 @@ class EventFinder:
         return candidate.start_dt(tz) > datetime.now(tz) - timedelta(hours=1)
 
     def _already_on_calendar(self, candidate: EventCandidate) -> bool:
-        if candidate.ical_uid and self.db.one("SELECT 1 FROM events WHERE ical_uid = ? AND status != 'cancelled'",
+        if candidate.ical_uid and self.db.one("SELECT 1 FROM events WHERE duplicate_of = '' AND ical_uid = ? AND status != 'cancelled'",
                                               (candidate.ical_uid,)):
             return True
         day = candidate.start[:10]
-        for row in self.db.all("SELECT summary, start FROM events WHERE start >= ? AND start < ? AND status != 'cancelled'",
+        for row in self.db.all("SELECT summary, start FROM events WHERE duplicate_of = '' AND start >= ? AND start < ? AND status != 'cancelled'",
                                (day, next_day(day))):
             if similar_titles(row["summary"], candidate.title):
                 return True
@@ -500,7 +500,7 @@ class EventFinder:
         words = title_tokens(rest) - {"the", "and", "event", "this", "next", "with", "for"}
         if not words:
             return None, ""
-        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start >= ? "
+        rows = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start >= ? "
                            "ORDER BY start LIMIT 400", (now.date().isoformat(),))
         if day is not None:
             rows = [r for r in rows if r["start"][:10] == day.isoformat()]

@@ -94,7 +94,7 @@ class Brief:
 
     def events_on(self, day: date) -> list[str]:
         tz = self.settings.tz
-        rows = self.db.all("SELECT * FROM events WHERE status != 'cancelled' AND start < ? AND end >= ? "
+        rows = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start < ? AND end >= ? "
                            "ORDER BY start", ((day + timedelta(days=1)).isoformat(), day.isoformat()))
         lines = []
         for row in rows:
@@ -113,7 +113,7 @@ class Brief:
 
     def to_have_ready(self, day: date) -> list[str]:
         """Booking references, codes and things to bring, from the descriptions of that day's events."""
-        rows = self.db.all("SELECT summary, start, description FROM events WHERE status != 'cancelled' "
+        rows = self.db.all("SELECT summary, start, description FROM events WHERE duplicate_of = '' AND status != 'cancelled' "
                            "AND start >= ? AND start < ? AND description != '' ORDER BY start",
                            (day.isoformat(), (day + timedelta(days=1)).isoformat()))
         lines = []
@@ -361,7 +361,7 @@ class Brief:
         # looking back
         week_ago = time.time() - 7 * 86400
         back = []
-        past = self.db.one("SELECT COUNT(*) n FROM events WHERE status != 'cancelled' AND start >= ? AND start < ?",
+        past = self.db.one("SELECT COUNT(*) n FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND start >= ? AND start < ?",
                            ((today - timedelta(days=7)).isoformat(), today.isoformat()))["n"]
         if past:
             back.append(f"{past} calendar event(s)")

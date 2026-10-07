@@ -325,7 +325,7 @@ class VaultWriter:
         )
 
     async def render_event(self, event_id: str) -> NoteSpec | None:
-        event = self.db.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        event = self.db.one("SELECT * FROM events WHERE duplicate_of = '' AND event_id = ?", (event_id,))
         if event is None:
             return None
         attendees = json.loads(event["attendees"])
@@ -376,7 +376,7 @@ class VaultWriter:
             addresses + addresses,
         )
         events = self.db.all(
-            f"SELECT * FROM events WHERE status != 'cancelled' AND EXISTS (SELECT 1 FROM json_each(attendees) j "
+            f"SELECT * FROM events WHERE duplicate_of = '' AND status != 'cancelled' AND EXISTS (SELECT 1 FROM json_each(attendees) j "
             f"WHERE json_extract(j.value, '$.email') IN ({marks})) ORDER BY start DESC LIMIT 15",
             addresses,
         )

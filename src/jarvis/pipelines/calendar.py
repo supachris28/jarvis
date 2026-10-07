@@ -38,7 +38,34 @@ class CalendarPipeline:
                 if self.upsert(event):
                     changed += 1
         self.db.set("calendar.last_run", now.timestamp())
-        return {"seen": seen, "changed": changed, "backfill": first}
+        duplicates = self.dedupe()
+        return {"seen": seen, "changed": changed, "backfill": first, "duplicates": duplicates}
+
+    def dedupe(self) -> int:
+        """The same event in two calendars (your main one and the family one, say) is kept once: the copy in the
+        calendar listed first wins; the others are marked `duplicate_of` it and left out everywhere."""
+        order = {c: i for i, c in enumerate(self.settings.google_calendar_ids)}
+        rows = [dict(r) for r in self.db.all("SELECT * FROM events WHERE status != 'cancelled'")]
+        from ..assistant.agenda import duplicate_groups
+        groups = duplicate_groups(rows, order)
+        marked = 0
+        tz = self.settings.tz
+        for members in groups:
+            keep = members[0]["event_id"]
+            for r in members:
+                want = "" if r["event_id"] == keep else keep
+                if r["duplicate_of"] == want:
+                    continue
+                self.db.execute("UPDATE events SET duplicate_of = ? WHERE event_id = ?", (want, r["event_id"]))
+                day = parse_iso(r["start"], tz).astimezone(tz).strftime("%Y-%m-%d") if r["start"] else ""
+                if want:      # one line in the journal, not two
+                    self.db.execute("DELETE FROM journal WHERE kind = 'event' AND ref = ?", (r["event_id"],))
+                    marked += 1
+                else:         # its twin has gone: it's the only copy again
+                    self.journal(r)
+                if day:
+                    self.db.queue_note("journal", day)
+        return marked
 
     def localise_stored(self) -> int:
         """One-off: events stored before v0.9.12 kept Google's UTC text, so their [:10] could be the wrong day."""
@@ -74,24 +101,19 @@ class CalendarPipeline:
         reminded = 0 if existing is None or existing["start"] != event["start"] else existing["reminded"]
         self.db.execute(
             "INSERT OR REPLACE INTO events (event_id, calendar_id, path, summary, start, end, all_day, location, "
-            "description, attendees, status, updated, html_link, reminded, ical_uid) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "description, attendees, status, updated, html_link, reminded, ical_uid, duplicate_of) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (event["event_id"], event["calendar_id"], path, event["summary"], event["start"], event["end"],
              int(event["all_day"]), event["location"], event["description"], json.dumps(event["attendees"]),
-             event["status"], event["updated"], event["html_link"], reminded, event.get("ical_uid", "")),
+             event["status"], event["updated"], event["html_link"], reminded, event.get("ical_uid", ""),
+             existing["duplicate_of"] if existing is not None else ""),   # re-checked by dedupe() after each run
         )
         for attendee in event["attendees"]:
             email = attendee.get("email", "")
             if attendee.get("self") or not email or email.endswith("calendar.google.com"):
                 continue
             self.writer.ensure_person(email, attendee.get("name", ""), create=True)
-        day = f"{local_start:%Y-%m-%d}"
-        when = "all day" if event["all_day"] else f"{local_start:%H:%M}"
-        status = " (cancelled)" if event["status"] == "cancelled" else ""
-        text = f"Event ({when}): {link(path, one_line(event['summary'], 80) or 'event')}{status}"
-        self.db.execute("DELETE FROM journal WHERE kind = 'event' AND ref = ?", (event["event_id"],))
-        self.db.execute("INSERT OR REPLACE INTO journal (day, kind, ref, ts, text) VALUES (?, 'event', ?, ?, ?)",
-                        (day, event["event_id"], local_start.timestamp(), text))
+        day = self.journal(event | {"path": path})
         if existing is not None and existing["start"][:10] != event["start"][:10]:
             old_day = parse_iso(existing["start"], tz).astimezone(tz).strftime("%Y-%m-%d")
             self.db.queue_note("journal", old_day)
@@ -99,13 +121,27 @@ class CalendarPipeline:
         self.db.queue_note("event", event["event_id"])
         return True
 
+    def journal(self, event: dict) -> str:
+        """The event's line in the day's journal; returns the day."""
+        tz = self.settings.tz
+        start = parse_iso(event["start"], tz) if event["start"] else datetime.now(tz)
+        local_start = start.astimezone(tz)
+        day = f"{local_start:%Y-%m-%d}"
+        when = "all day" if event["all_day"] else f"{local_start:%H:%M}"
+        status = " (cancelled)" if event["status"] == "cancelled" else ""
+        text = f"Event ({when}): {link(event['path'], one_line(event['summary'], 80) or 'event')}{status}"
+        self.db.execute("DELETE FROM journal WHERE kind = 'event' AND ref = ?", (event["event_id"],))
+        self.db.execute("INSERT OR REPLACE INTO journal (day, kind, ref, ts, text) VALUES (?, 'event', ?, ?, ?)",
+                        (day, event["event_id"], local_start.timestamp(), text))
+        return day
+
     async def remind(self) -> int:
         tz = self.settings.tz
         now = datetime.now(tz)
         horizon = now + timedelta(minutes=self.settings.notify_event_lead_minutes)
         sent = 0
         # `start` is ISO text, so a lexical lower bound (a day of slack for offsets) uses the events(start) index
-        rows = self.db.all("SELECT * FROM events WHERE reminded = 0 AND all_day = 0 AND status != 'cancelled' "
+        rows = self.db.all("SELECT * FROM events WHERE duplicate_of = '' AND reminded = 0 AND all_day = 0 AND status != 'cancelled' "
                            "AND start >= ?", ((now - timedelta(days=1)).date().isoformat(),))
         for row in rows:
             start = parse_iso(row["start"], tz)
