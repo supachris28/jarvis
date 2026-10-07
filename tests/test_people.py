@@ -221,8 +221,15 @@ class ChatDismissTests(IntegrationBase):
         [card] = [r["content"] for r in s.db.all("SELECT content FROM chat_messages WHERE role = 'activity'")]
         self.assertTrue(card.startswith(f"✨ **Jarvis updated to v{__version__}**\n- "), card)
         self.assertIn("[All changes](#whatsnew)", card)
-        s.db.set("app.version_announced", "0.18.2")       # several releases since: all of them
+        import re
+        from pathlib import Path
+        import jarvis
+        log = (Path(jarvis.__file__).parent / "CHANGELOG.md").read_text(encoding="utf-8")
+        versions = re.findall(r"(?m)^## (\S+)", log)
+        s.db.set("app.version_announced", versions[2])       # two releases since: both of them
         s.announce_version()
         card = s.db.one("SELECT content FROM chat_messages ORDER BY id DESC LIMIT 1")["content"]
-        self.assertIn("Partners' children suggested", card)
-        self.assertNotIn("person's page wouldn't open", card, "0.18.2 itself was already announced")
+        sections = re.split(r"(?m)^## ", log)[1:]
+        for section in sections[:2]:
+            self.assertIn(section.split("\n")[1].strip(), card)
+        self.assertNotIn(sections[2].split("\n")[1].strip(), card, "already announced")
