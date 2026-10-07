@@ -164,6 +164,9 @@ def _people_matcher(index: tuple[tuple[str, str], ...]) -> tuple[re.Pattern | No
     return re.compile(rf"(?<![\w-])(?:{alternation})(?![\w-])"), word_names
 
 
+_EMAIL_SHOW: contextvars.ContextVar[dict | None] = contextvars.ContextVar("email_show", default=None)
+SHOW_WORDS = frozenset("""email emails mail inbox message messages look find search check show read open get see tell
+recent latest last newest most current today week weekend this new about from sent please""".split())
 _EMAIL_TRIED: contextvars.ContextVar[list | None] = contextvars.ContextVar("email_tried", default=None)
 _PART_OF_MANY: contextvars.ContextVar[bool] = contextvars.ContextVar("jarvis_part_of_many", default=False)
 
@@ -455,6 +458,15 @@ class Assistant:
         # not found where the router looked → the model picks other places and they're all searched
         everywhere = {"tried": plan.route, "people": bool(people)} if plan.route in (
             "vault", "gmail", "calendar", "drive", "home") else None
+        shown_email = _EMAIL_SHOW.get() if plan.route == "gmail" else None
+        if context.strip() and shown_email and self._just_wants_the_email(question, shown_email["known"]):
+            text = self._email_text(shown_email["thread"])
+            diag.event("assistant", "showing the email itself", thread=shown_email["thread"]["id"])
+            yield {"type": "sources", "items": sources[:1]}
+            yield {"type": "token", "text": text}
+            self.save_turn(prompt, text)
+            yield {"type": "done"}
+            return
         if not context.strip() and email_query:
             tried = _EMAIL_TRIED.get() or [plan.query]
             text = ("I couldn't find an email matching that. I searched Gmail for "
@@ -1155,14 +1167,44 @@ class Assistant:
         if words and any(relevance(t) >= 2 for t in threads):
             threads = on_topic
         newest_only = bool(RECENT_EMAIL.search(prompt or "")) or bool(words and relevance(threads[0]) >= 2)
+        _EMAIL_SHOW.set(None)
         for thread in threads[:1 if newest_only else 3]:      # the newest ones, read in full
-            thread["body"] = await self._thread_body(thread["id"])
+            thread["body"] = await self._thread_body(thread["id"], 8000 if thread is threads[0] else 3000)
         threads[0]["most_recent"] = True
+        if newest_only and threads[0]["body"] and (relevance(threads[0]) >= 2 or "from:" in tried[-1]):
+            asked_senders = " ".join(x or y for x, y in re.findall(r'from:(?:"([^"]+)"|(\S+))', query + " " + tried[-1]))
+            known = " ".join([" ".join(words), asked_senders, threads[0].get("from") or "", threads[0].get("subject") or ""])
+            _EMAIL_SHOW.set({"thread": threads[0], "known": set(re.findall(r"[a-z][\w'-]*", known.casefold()))})
         sources = [{"label": f"{t['from']} — {t['subject']}", "url": app_email_url(t["id"])} for t in threads]
         note = (f"Searched Gmail for: {tried[-1]}\n" + ("" if tried[-1] == query else f"(asked for: {query})\n")
                 + "Newest first. Unless older ones are asked about, answer from the most recent one (its full text "
                   "is under \"body\").\n")
         return note + json.dumps(threads, ensure_ascii=False, indent=1), sources
+
+    @staticmethod
+    def _just_wants_the_email(question: str, known: set[str]) -> bool:
+        """'What are the life group notices?', 'the latest email from Lucy about life group' — asking for the email
+        itself (show it as it is), not a question about it ('when is gospel night?')."""
+        words = [w for w in re.findall(r"[a-z][\w'-]*", question.casefold().split("\n(asked again")[0])
+                 if w not in STOPWORDS and w not in SHOW_WORDS]
+        extra = [w for w in words if w not in known and w.rstrip("s") not in known and f"{w}s" not in known]
+        return not extra
+
+    def _email_text(self, thread: dict) -> str:
+        """The email as it was sent: who, when, subject and the whole text (a small model's summary drops most of
+        it)."""
+        row = self.db.one("SELECT ts FROM emails WHERE thread_id = ? ORDER BY ts DESC LIMIT 1", (thread["id"],))
+        when = ""
+        if row:
+            when = datetime.fromtimestamp(row["ts"], self.settings.tz).strftime("%a %-d %b %Y, %H:%M")
+        elif thread.get("date"):
+            when = thread["date"]
+        sender = re.sub(r"\s*<[^>]+>", "", thread.get("from") or "").strip().strip('"')
+        body = re.sub(r"\n{3,}", "\n\n", (thread.get("body") or "").strip())
+        body = re.sub(r"(?m)^(#+|>+)", r"\\\1", body)        # plain text, not headings or quotes
+        link = app_email_url(thread["id"])
+        return (f"**{thread.get('subject') or '(no subject)'}**  \n{sender}{' · ' + when if when else ''}\n\n{body}"
+                f"\n\n[Open the email]({link})")
 
     async def _thread_body(self, thread_id: str, limit: int = 3000) -> str:
         row = self.db.one("SELECT body FROM emails WHERE thread_id = ? AND body != '' ORDER BY ts DESC LIMIT 1",

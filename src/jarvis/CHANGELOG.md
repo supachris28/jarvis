@@ -1,5 +1,8 @@
 # What's new in Jarvis
 
+## 0.20.5 — 7 October 2026
+- **Asking for an email shows the email.** “What are the life group notices?” or “the latest email from Lucy” now shows the newest matching email itself — subject, sender, date and the whole text, with a link to open it — instead of a one-line summary. Questions *about* it (“when is the prayer week in the notices?”) are still answered in a sentence.
+
 ## 0.20.4 — 7 October 2026
 - Fixed: a good answer from your email was replaced mid-stream by “couldn't find anything” — a closing remark like “the emails don't mention…” no longer counts as Jarvis not knowing.
 - Email answers stick to emails that are about what you asked (the words in the subject), not ones that just mention “group” somewhere, and use the most recent one unless you ask about older ones.

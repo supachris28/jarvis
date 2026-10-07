@@ -111,7 +111,7 @@ class ReportTwoTests(IntegrationBase):
             lowered = query.casefold()
             if "from:" in lowered and 'from:"lucy kitchin"' not in lowered:
                 return []
-            if "life group" not in lowered:
+            if "life group" not in lowered and lowered != 'from:"lucy kitchin"':
                 return []
             return [{"id": "tm1", "subject": "Life Group Notices", "from": "Lucy Kitchin <kings@mg.churchsuite.com>",
                      "date": "", "messages": 1, "snippet": "Prayer and fasting"},
@@ -186,3 +186,23 @@ class ReportThreeTests(ReportTwoTests):
         self.assertNotIn("O2", context)
         self.assertIn('"most_recent": true', context)
         self.assertIn("Prayer and fasting week from Monday 12th.", context, "the newest is read in full")
+
+
+class ReportFourTests(ReportTwoTests):
+    """jarvis-report-4: the right email, but a one-line summary instead of the notices."""
+
+    def text(self, prompt):
+        return "".join(e.get("text", "") for e in self.ask(prompt) if e["type"] == "token")
+
+    def test_asking_for_the_email_shows_all_of_it(self):
+        for prompt in ("What are the life group notices?",
+                       "Look for the most recent email from.lich kitchen about life group notices",
+                       "the latest email from lucy kitchen"):
+            text = self.text(prompt)
+            self.assertTrue(text.startswith("**Life Group Notices**  \nLucy Kitchin"), (prompt, text))
+            self.assertIn("Prayer and fasting week from Monday 12th.", text, prompt)
+            self.assertIn("[Open the email](/#email?thread=tm1)", text, prompt)
+
+    def test_a_question_about_it_is_answered_not_dumped(self):
+        text = self.text("When is the prayer and fasting week in the life group notices?")
+        self.assertNotIn("[Open the email]", text)
