@@ -647,3 +647,64 @@ async def _link_name(self: People, name: str, path: str = "", create: bool = Fal
 
 People.me_names = _me_names
 People.link_name = _link_name
+
+
+# ---------------------------------------------------------------------------- "Dan's birthday is 19 September"
+_WHO = r"(?P<who>[A-Za-z][\w'’.-]*(?:\s+(?:[A-Za-z][\w'’.-]*|\+)){0,3}?)"
+FACTS = [
+    ("birthday", re.compile(rf"^(?:remember\s+(?:that\s+)?|note\s+(?:that\s+)?)?{_WHO}(?:'s|’s|s'|’)?\s+"
+                            r"(?:birthday|bday|b-day|date of birth|dob)\s+(?:is|=|:)\s+(?:on\s+)?(?P<value>.+?)[.!]?$", re.I)),
+    ("birthday", re.compile(rf"^(?:remember\s+(?:that\s+)?)?{_WHO}\s+was\s+born\s+(?:on\s+)?(?P<value>.+?)[.!]?$", re.I)),
+    ("partner", re.compile(rf"^(?:remember\s+(?:that\s+)?)?{_WHO}(?:'s|’s)\s+(?:partner|wife|husband|girlfriend|boyfriend|"
+                           r"fianc[ée]e?)\s+is\s+(?:called\s+)?(?P<value>.+?)[.!]?$", re.I)),
+    ("children", re.compile(rf"^(?:remember\s+(?:that\s+)?)?{_WHO}(?:'s|’s)\s+(?:children|kids|sons?|daughters?|child)\s+"
+                            r"(?:are|is)\s+(?:called\s+)?(?P<value>.+?)[.!]?$", re.I)),
+    ("phone", re.compile(rf"^(?:remember\s+(?:that\s+)?)?{_WHO}(?:'s|’s)\s+(?:phone|mobile|phone number|number)\s+is\s+"
+                         r"(?P<value>\+?[\d ()-]{7,})[.!]?$", re.I)),
+]
+NOT_A_NAME = re.compile(r"^(?:my|our|your|his|her|their|the|a|an|what|when|who|whose|is|it|this|that|i|we|you)\b", re.I)
+
+
+def person_fact(prompt: str) -> tuple[str, str, str] | None:
+    """'Dan Brodier birthday is 19 September' → ('Dan Brodier', 'birthday', '19 September')."""
+    text = re.sub(r"\s+", " ", prompt).strip()
+    if text.endswith("?"):
+        return None
+    for field_name, pattern in FACTS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        who, value = match.group("who").strip(), match.group("value").strip()
+        who = re.sub(r"(?:'s|’s|'|’)$", "", who).strip()
+        if NOT_A_NAME.match(who) or len(who) < 2:
+            return None
+        if field_name == "birthday" and not parse_date(value):
+            return None
+        return who, field_name, value
+    return None
+
+
+async def _tell(self: People, prompt: str) -> str | None:
+    """Save what you just told Jarvis about someone to their People note (linking family both ways)."""
+    found = person_fact(prompt)
+    if found is None:
+        return None
+    who, field_name, value = found
+    path = await self.resolve(who, create=False) or await self.resolve(who, create=True)
+    if not path:
+        return None
+    person = await self.update(path, {field_name: value})
+    name = person.get("name") or path.rsplit("/", 1)[-1].removesuffix(".md")
+    link_md = f"[{name}](#people?p={quote(path)})"
+    diag.event("people", f"told: {name} {field_name}", value=value[:80])
+    if field_name == "birthday":
+        shown = person.get("birthday_text") or value
+        return f"Saved — {link_md}'s birthday is {shown}."
+    if field_name == "partner":
+        return f"Saved — {link_md}'s partner is {', '.join(person.get('partner') or [value])} (linked both ways)."
+    if field_name == "children":
+        return f"Saved — {link_md}'s children: {', '.join(person.get('children') or [value])} (linked both ways)."
+    return f"Saved — {link_md}'s phone number is {value}."
+
+
+People.tell = _tell

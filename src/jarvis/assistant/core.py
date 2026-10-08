@@ -164,6 +164,9 @@ def _people_matcher(index: tuple[tuple[str, str], ...]) -> tuple[re.Pattern | No
     return re.compile(rf"(?<![\w-])(?:{alternation})(?![\w-])"), word_names
 
 
+WHO_HOME = re.compile(r"\bwho(?:'s| is| are)\s+(?:at\s+home|home|in(?:\s+the\s+house)?|out|here|away)\b|"
+                      r"\bis\s+(?:any|some)(?:one|body)\s+(?:at\s+)?(?:home|in)\b|\bwho(?:'s| is)\s+not\s+(?:at\s+)?home\b",
+                      re.IGNORECASE)
 _EMAIL_SHOW: contextvars.ContextVar[dict | None] = contextvars.ContextVar("email_show", default=None)
 SHOW_WORDS = frozenset("""email emails mail inbox message messages look find search check show read open get see tell
 recent latest last newest most current today week weekend this new about from sent please""".split())
@@ -180,6 +183,7 @@ class Assistant:
         self.deliveries = None  # Deliveries, attached by Services
         self.deadlines = None  # Deadlines, attached by Services
         self.tasks = None  # Tasks (to-dos and shopping), attached by Services
+        self.people = None  # People (People notes and families), attached by Services
         self.db = db
         self.llm = llm
         self.vault = vault
@@ -268,6 +272,14 @@ class Assistant:
                 async for event in self.handle_many(prompt, parts):
                     yield event
                 return
+        if self.people is not None:
+            told = await self.people.tell(prompt)
+            if told:
+                yield {"type": "meta", "route": "people"}
+                yield {"type": "token", "text": told}
+                self.save_turn(prompt, told)
+                yield {"type": "done"}
+                return
         captured = remember_text(prompt)
         if captured:
             answer = await self.remember(captured)
@@ -298,6 +310,14 @@ class Assistant:
             async for event in self.handle_brief(prompt):
                 yield event
             return
+        if self.ha is not None and WHO_HOME.search(prompt):
+            answer = await self.who_is_home()
+            if answer:
+                yield {"type": "meta", "route": "home"}
+                yield {"type": "token", "text": answer}
+                self.save_turn(prompt, answer)
+                yield {"type": "done"}
+                return
         if self.tasks is not None:
             answer = await self.tasks.handle(prompt)
             if answer:
@@ -1180,6 +1200,29 @@ class Assistant:
                 + "Newest first. Unless older ones are asked about, answer from the most recent one (its full text "
                   "is under \"body\").\n")
         return note + json.dumps(threads, ensure_ascii=False, indent=1), sources
+
+    async def who_is_home(self) -> str:
+        """'Who's home?' — from Home Assistant's people (their phones' locations), not a guess."""
+        if not (getattr(self.ha, "url", "") and getattr(self.ha, "token", "")):
+            return ""
+        try:
+            states = await self.ha.states()
+        except HAError as error:
+            return f"I couldn't reach Home Assistant: {error}"
+        people = [s for s in states if str(s.get("entity_id", "")).startswith("person.")]
+        if not people:
+            return ""
+        name = lambda s: (s.get("attributes") or {}).get("friendly_name") or s["entity_id"].split(".", 1)[1].title()  # noqa: E731
+        home = [name(s) for s in people if s.get("state") == "home"]
+        away = [(name(s), s.get("state") or "") for s in people if s.get("state") != "home"]
+
+        def where(state: str) -> str:
+            return {"not_home": "out", "unknown": "not known", "unavailable": "not known"}.get(state, f"at {state}")
+        lines = [f"**At home:** {', '.join(home)}" if home else "**Nobody's at home.**"]
+        if away:
+            lines.append("**Out:** " + ", ".join(f"{n} ({where(st)})" if where(st) != "out" else n for n, st in away))
+        diag.event("home", f"who's home: {len(home)} of {len(people)}")
+        return "\n".join(lines)
 
     @staticmethod
     def _just_wants_the_email(question: str, known: set[str]) -> bool:

@@ -1,5 +1,9 @@
 # What's new in Jarvis
 
+## 0.20.6 — 8 October 2026
+- **Tell Jarvis about people and it's saved** to their People note: “Dan Brodier's birthday is 19 September”, “Jude was born on 8 October 2014”, “Ben's wife is Emily”, “Ben's kids are Sam and Lily”, “Sam's phone is 07700 900123”. Family links go both ways; someone new gets a note. (Before, it just repeated it back.)
+- **“Who's home?”** is answered from Home Assistant's people (where their phones are), instead of a guess.
+
 ## 0.20.5 — 7 October 2026
 - **Asking for an email shows the email.** “What are the life group notices?” or “the latest email from Lucy” now shows the newest matching email itself — subject, sender, date and the whole text, with a link to open it — instead of a one-line summary. Questions *about* it (“when is the prayer week in the notices?”) are still answered in a sentence.
 

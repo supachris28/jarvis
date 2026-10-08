@@ -155,7 +155,7 @@ class Services:
         self.tasks = Tasks(settings, self.db, self.ha)
         self.assistant.tasks = self.brief.tasks = self.tasks
         self.people = People(settings, self.db, self.vault, self.writer, self.assistant)
-        self.brief.people = self.people
+        self.brief.people = self.assistant.people = self.people
         self.birthday_reminders = BirthdayReminders(settings, self.notifier, self.vault, self.assistant.birthdays)
         self.ha.alias_source = self.assistant.home_names  # "gas water heater" → water_heater.thermostat1
         self._learn_home_names_from_captures()

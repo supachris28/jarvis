@@ -233,3 +233,44 @@ class ChatDismissTests(IntegrationBase):
         for section in sections[:2]:
             self.assertIn(section.split("\n")[1].strip(), card)
         self.assertNotIn(sections[2].split("\n")[1].strip(), card, "already announced")
+
+
+class TellTests(PeopleTests):
+    """jarvis-report-5: 'Dan Brodier birthday is 19 September' answered, but nothing was saved."""
+
+    def ask(self, text):
+        async def go():
+            return [e async for e in self.services.assistant.handle(text)]
+        return "".join(e.get("text", "") for e in self.run_async(go()) if e["type"] == "token")
+
+    def test_birthday_told_is_saved(self):
+        self.obsidian.files["People/Dan Brodier.md"] = "---\nfamily: Brodier\n---\n# Dan Brodier\n"
+        text = self.ask("Dan Brodier birthday is 19 September")
+        self.assertEqual(text, "Saved — [Dan Brodier](#people?p=People/Dan%20Brodier.md)'s birthday is 19 September.")
+        self.assertEqual(self.props("People/Dan Brodier.md")["birthday"], "--09-19")
+        self.ask("Ben Topliss's birthday is 12 March 1986")
+        self.assertEqual(self.props("People/Ben Topliss.md")["birthday"], "1986-03-12")
+
+    def test_family_and_phone_and_new_people(self):
+        self.ask("Ben's wife is Emily")
+        self.assertEqual(self.props("People/Ben Topliss.md")["partner"], "[[People/Emily Topliss]]")
+        self.ask("Ben's kids are Sam and Lily")
+        self.assertEqual(len(self.props("People/Ben Topliss.md")["children"]), 2)
+        self.ask("Grace Hopper was born on 9 December 1906")
+        self.assertEqual(self.props("People/Grace Hopper.md")["birthday"], "1906-12-09")
+        self.assertNotIn("Saved", self.ask("When is Ben's birthday?"))
+
+
+class WhoIsHomeTests(IntegrationBase):
+    def test_who_is_home_from_home_assistant(self):
+        from fakes import FakeHomeAssistant, Server
+        home = FakeHomeAssistant()
+        server = Server(home.app()).__enter__()
+        self.addCleanup(server.__exit__)
+        self.services.ha.url, self.services.ha.token = server.url, FakeHomeAssistant.TOKEN
+        async def go(text):
+            return [e async for e in self.services.assistant.handle(text)]
+        for question in ("Who is at home currently?", "who's home", "Is anyone in?"):
+            events = self.run_async(go(question))
+            text = "".join(e.get("text", "") for e in events if e["type"] == "token")
+            self.assertEqual(text, "**At home:** Chris\n**Out:** Jen (at Work), Sophie", question)
